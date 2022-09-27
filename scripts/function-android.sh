@@ -2,6 +2,8 @@
 
 source "${BASEDIR}/scripts/function.sh"
 
+prepare_inline_sed
+
 enable_default_android_architectures() {
   ENABLED_ARCHITECTURES[ARCH_ARM_V7A]=1
   ENABLED_ARCHITECTURES[ARCH_ARM_V7A_NEON]=1
@@ -31,7 +33,7 @@ under the prebuilt folder.\n"
   echo -e "Usage: ./$COMMAND [OPTION]... [VAR=VALUE]...\n"
   echo -e "Specify environment variables as VARIABLE=VALUE to override default build options.\n"
 
-  display_help_options "  -l, --lts\t\t\tbuild lts packages to support API 16+ devices" "      --api-level=api\t\toverride Android api level [${API}]"
+  display_help_options "  -l, --lts\t\t\tbuild lts packages to support API 16+ devices" "      --api-level=api\t\toverride Android api level" "      --no-ffmpeg-kit-protocols\tdisable custom ffmpeg-kit protocols (saf)"
   display_help_licensing
 
   echo -e "Architectures:"
@@ -48,6 +50,7 @@ under the prebuilt folder.\n"
 
   display_help_common_libraries
   display_help_gpl_libraries
+  display_help_custom_libraries
   display_help_advanced_options "  --no-archive\t\t\tdo not build Android archive [no]"
 }
 
@@ -67,7 +70,7 @@ build_application_mk() {
     local LTS_BUILD_FLAG="-DFFMPEG_KIT_LTS "
   fi
 
-  if [[ ${ENABLED_LIBRARIES[$LIBRARY_X265]} -eq 1 ]] || [[ ${ENABLED_LIBRARIES[$LIBRARY_TESSERACT]} -eq 1 ]] || [[ ${ENABLED_LIBRARIES[$LIBRARY_OPENH264]} -eq 1 ]] || [[ ${ENABLED_LIBRARIES[$LIBRARY_SNAPPY]} -eq 1 ]] || [[ ${ENABLED_LIBRARIES[$LIBRARY_RUBBERBAND]} -eq 1 ]]; then
+  if [[ ${ENABLED_LIBRARIES[$LIBRARY_X265]} -eq 1 ]] || [[ ${ENABLED_LIBRARIES[$LIBRARY_TESSERACT]} -eq 1 ]] || [[ ${ENABLED_LIBRARIES[$LIBRARY_OPENH264]} -eq 1 ]] || [[ ${ENABLED_LIBRARIES[$LIBRARY_SNAPPY]} -eq 1 ]] || [[ ${ENABLED_LIBRARIES[$LIBRARY_RUBBERBAND]} -eq 1 ]] || [[ ${ENABLED_LIBRARIES[$LIBRARY_ZIMG]} -eq 1 ]] || [[ ${ENABLED_LIBRARIES[$LIBRARY_SRT]} -eq 1 ]] || [[ -n ${CUSTOM_LIBRARY_USES_CPP} ]]; then
     local APP_STL="c++_shared"
   else
     local APP_STL="none"
@@ -109,6 +112,17 @@ get_clang_host() {
   esac
 }
 
+is_darwin_arm64() {
+  HOST_OS=$(uname -s)
+  HOST_ARCH=$(uname -m)
+
+  if [ "${HOST_OS}" == "Darwin" ] && [ "${HOST_ARCH}" == "arm64" ]; then
+    echo "1"
+  else
+    echo "0"
+  fi
+}
+
 get_toolchain() {
   HOST_OS=$(uname -s)
   case ${HOST_OS} in
@@ -123,6 +137,12 @@ get_toolchain() {
   i?86) HOST_ARCH=x86 ;;
   x86_64 | amd64) HOST_ARCH=x86_64 ;;
   esac
+
+  if [ "$(is_darwin_arm64)" == "1" ]; then
+    # NDK DOESNT HAVE AN ARM64 TOOLCHAIN ON DARWIN
+    # WE USE x86-64 WITH ROSETTA INSTEAD
+    HOST_ARCH=x86_64
+  fi
 
   echo "${HOST_OS}-${HOST_ARCH}"
 }
@@ -207,7 +227,14 @@ get_common_cflags() {
     local LTS_BUILD__FLAG="-DFFMPEG_KIT_LTS "
   fi
 
-  echo "-fno-integrated-as -fstrict-aliasing -DANDROID_NDK -fPIC -DANDROID ${LTS_BUILD__FLAG}-D__ANDROID__ -D__ANDROID_API__=${API}"
+  case ${DETECTED_NDK_VERSION} in
+    23*)
+      echo "-fstrict-aliasing -DANDROID_NDK -fPIC -DANDROID ${LTS_BUILD__FLAG}-D__ANDROID__ -D__ANDROID_MIN_SDK_VERSION__=${API}"
+      ;;
+    *)
+      echo "-fno-integrated-as -fstrict-aliasing -DANDROID_NDK -fPIC -DANDROID ${LTS_BUILD__FLAG}-D__ANDROID__ -D__ANDROID_API__=${API}"
+      ;;
+  esac
 }
 
 get_arch_specific_cflags() {
@@ -222,10 +249,24 @@ get_arch_specific_cflags() {
     echo "-march=armv8-a -DFFMPEG_KIT_ARM64_V8A"
     ;;
   x86)
-    echo "-march=i686 -mtune=intel -mssse3 -mfpmath=sse -m32 -DFFMPEG_KIT_X86"
+    case ${DETECTED_NDK_VERSION} in
+      23*)
+        echo "-march=i686 -mtune=generic -mssse3 -mfpmath=sse -m32 -DFFMPEG_KIT_X86"
+        ;;
+      *)
+        echo "-march=i686 -mtune=intel -mssse3 -mfpmath=sse -m32 -DFFMPEG_KIT_X86"
+        ;;
+    esac
     ;;
   x86-64)
-    echo "-march=x86-64 -msse4.2 -mpopcnt -m64 -mtune=intel -DFFMPEG_KIT_X86_64"
+    case ${DETECTED_NDK_VERSION} in
+      23*)
+        echo "-march=x86-64 -msse4.2 -mpopcnt -m64 -mtune=generic -DFFMPEG_KIT_X86_64"
+        ;;
+      *)
+        echo "-march=x86-64 -msse4.2 -mpopcnt -m64 -mtune=intel -DFFMPEG_KIT_X86_64"
+        ;;
+    esac
     ;;
   esac
 }
@@ -252,7 +293,7 @@ get_size_optimization_cflags() {
   arm64-v8a)
     case $1 in
     ffmpeg)
-      ARCH_OPTIMIZATION="${LINK_TIME_OPTIMIZATION_FLAGS} -fuse-ld=gold -O2 -ffunction-sections -fdata-sections"
+      ARCH_OPTIMIZATION="${LINK_TIME_OPTIMIZATION_FLAGS} -fuse-ld=lld -O2 -ffunction-sections -fdata-sections"
       ;;
     *)
       ARCH_OPTIMIZATION="-Os -ffunction-sections -fdata-sections"
@@ -294,7 +335,7 @@ get_app_specific_cflags() {
   rubberband)
     APP_FLAGS="-std=c99 -Wno-unused-function"
     ;;
-  shine)
+  libvpx | openssl | shine | srt)
     APP_FLAGS="-Wno-unused-function"
     ;;
   soxr | snappy | libwebp)
@@ -352,7 +393,7 @@ get_cxxflags() {
   x265)
     echo "-std=c++11 -fno-exceptions ${OPTIMIZATION_FLAGS}"
     ;;
-  rubberband)
+  rubberband | srt | zimg)
     echo "-std=c++11 ${OPTIMIZATION_FLAGS}"
     ;;
   *)
@@ -366,16 +407,19 @@ get_common_linked_libraries() {
 
   case $1 in
   ffmpeg)
-    if [[ -z ${FFMPEG_KIT_LTS_BUILD} ]]; then
+
+    # SUPPORTED ON API LEVEL 24 AND LATER
+    if [[ ${API} -ge 24 ]]; then
       echo "-lc -lm -ldl -llog -lcamera2ndk -lmediandk ${COMMON_LIBRARY_PATHS}"
     else
       echo "-lc -lm -ldl -llog ${COMMON_LIBRARY_PATHS}"
+      echo -e "INFO: Building ffmpeg without native camera API which is not supported on Android API Level ${API}\n" 1>>"${BASEDIR}"/build.log 2>&1
     fi
     ;;
   libvpx)
     echo "-lc -lm ${COMMON_LIBRARY_PATHS}"
     ;;
-  tesseract | x265)
+  srt | tesseract | x265)
     echo "-lc -lm -ldl -llog -lc++_shared ${COMMON_LIBRARY_PATHS}"
     ;;
   *)
@@ -395,7 +439,7 @@ get_size_optimization_ldflags() {
   arm64-v8a)
     case $1 in
     ffmpeg)
-      echo "-Wl,--gc-sections ${LINK_TIME_OPTIMIZATION_FLAGS} -fuse-ld=gold -O2 -ffunction-sections -fdata-sections -finline-functions"
+      echo "-Wl,--gc-sections ${LINK_TIME_OPTIMIZATION_FLAGS} -fuse-ld=lld -O2 -ffunction-sections -fdata-sections -finline-functions"
       ;;
     *)
       echo "-Wl,--gc-sections -Os -ffunction-sections -fdata-sections"
@@ -760,6 +804,26 @@ Cflags: -I\${includedir}
 EOF
 }
 
+create_srt_package_config() {
+  local SRT_VERSION="$1"
+
+  cat >"${INSTALL_PKG_CONFIG_DIR}/srt.pc" <<EOF
+prefix=${LIB_INSTALL_BASE}/srt
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: srt
+Description: SRT library set
+Version: ${SRT_VERSION}
+
+Libs: -L\${libdir} -lsrt
+Libs.private: -lc -lm -ldl -llog -lc++_shared
+Cflags: -I\${includedir} -I\${includedir}/srt
+Requires.private: openssl libcrypto
+EOF
+}
+
 create_tesseract_package_config() {
   local TESSERACT_VERSION="$1"
 
@@ -814,9 +878,8 @@ Name: x265
 Description: H.265/HEVC video encoder
 Version: ${X265_VERSION}
 
-Requires:
 Libs: -L\${libdir} -lx265
-Libs.private: -lm -lgcc -lgcc -ldl -lgcc -lgcc -ldl -lc++_shared
+Libs.private: -lm -ldl -llog -lm -lc++_shared
 Cflags: -I\${includedir}
 EOF
 }
@@ -836,6 +899,24 @@ Version: ${XVIDCORE_VERSION}
 
 Requires:
 Libs: -L\${libdir}
+Cflags: -I\${includedir}
+EOF
+}
+
+create_zimg_package_config() {
+  local ZIMG_VERSION="$1"
+
+  cat >"${INSTALL_PKG_CONFIG_DIR}/zimg.pc" <<EOF
+prefix=${LIB_INSTALL_BASE}/zimg
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: zimg
+Description: Scaling, colorspace conversion, and dithering library
+Version: ${ZIMG_VERSION}
+
+Libs: -L\${libdir} -lzimg -lc++_shared
 Cflags: -I\${includedir}
 EOF
 }
@@ -917,7 +998,7 @@ get_aar_directory() {
 }
 
 android_ndk_cmake() {
-  local cmake=$(find "${ANDROID_HOME}"/cmake -path \*/bin/cmake -type f -print -quit)
+  local cmake=$(find "${ANDROID_SDK_ROOT}"/cmake -path \*/bin/cmake -type f -print -quit)
   if [[ -z ${cmake} ]]; then
     cmake=$(which cmake)
   fi
@@ -929,9 +1010,7 @@ android_ndk_cmake() {
   ASM_OPTIONS=""
   case ${ARCH} in
   arm-v7a-neon)
-    ASM_OPTIONS="-DANDROID_ABI=$(get_android_cmake_ndk_abi)"
-    # @TODO TEST THIS
-    #ASM_OPTIONS="-DANDROID_ABI=$(get_android_cmake_ndk_abi) -DANDROID_ARM_NEON=TRUE"
+    ASM_OPTIONS="-DANDROID_ABI=$(get_android_cmake_ndk_abi) -DANDROID_ARM_NEON=TRUE"
     ;;
   *)
     ASM_OPTIONS="-DANDROID_ABI=$(get_android_cmake_ndk_abi)"
@@ -955,7 +1034,6 @@ set_toolchain_paths() {
 
   HOST=$(get_host)
 
-  export AR=${HOST}-ar
   export CC=$(get_clang_host)-clang
   export CXX=$(get_clang_host)-clang++
 
@@ -970,12 +1048,22 @@ set_toolchain_paths() {
     export ac_cv_c_bigendian=no
     ;;
   esac
-
-  export LD=${HOST}-ld
-  export RANLIB=${HOST}-ranlib
-  export STRIP=${HOST}-strip
-  export NM=${HOST}-nm
-
+  case ${DETECTED_NDK_VERSION} in
+    23*)
+      export AR=llvm-ar
+      export LD=lld
+      export RANLIB=llvm-ranlib
+      export STRIP=llvm-strip
+      export NM=llvm-nm
+      ;;
+    *)
+      export AR=${HOST}-ar
+      export LD=${HOST}-ld
+      export RANLIB=${HOST}-ranlib
+      export STRIP=${HOST}-strip
+      export NM=${HOST}-nm
+    ;;
+  esac
   export INSTALL_PKG_CONFIG_DIR="${BASEDIR}"/prebuilt/$(get_build_directory)/pkgconfig
   export ZLIB_PACKAGE_CONFIG_PATH="${INSTALL_PKG_CONFIG_DIR}/zlib.pc"
 
@@ -986,8 +1074,6 @@ set_toolchain_paths() {
   if [ ! -f "${ZLIB_PACKAGE_CONFIG_PATH}" ]; then
     create_zlib_system_package_config 1>>"${BASEDIR}"/build.log 2>&1
   fi
-
-  prepare_inline_sed
 }
 
 build_android_lts_support() {
@@ -1008,6 +1094,6 @@ build_android_lts_support() {
   LDFLAGS=$(get_ldflags ${LIB_NAME})
 
   # BUILD
-  "$(get_clang_host)"-clang ${CFLAGS} -Wno-unused-command-line-argument -c "${BASEDIR}"/android/ffmpeg-kit-android-lib/src/main/cpp/android_lts_support.c -o "${BASEDIR}"/android/ffmpeg-kit-android-lib/src/main/cpp/android_lts_support.o ${LDFLAGS} 1>>"${BASEDIR}"/build.log 2>&1
-  "${HOST}"-ar rcs "${BASEDIR}"/android/ffmpeg-kit-android-lib/src/main/cpp/libandroidltssupport.a "${BASEDIR}"/android/ffmpeg-kit-android-lib/src/main/cpp/android_lts_support.o 1>>"${BASEDIR}"/build.log 2>&1
+  "${CC}" ${CFLAGS} -Wno-unused-command-line-argument -c "${BASEDIR}"/android/ffmpeg-kit-android-lib/src/main/cpp/android_lts_support.c -o "${BASEDIR}"/android/ffmpeg-kit-android-lib/src/main/cpp/android_lts_support.o ${LDFLAGS} 1>>"${BASEDIR}"/build.log 2>&1
+  "${AR}" rcs "${BASEDIR}"/android/ffmpeg-kit-android-lib/src/main/cpp/libandroidltssupport.a "${BASEDIR}"/android/ffmpeg-kit-android-lib/src/main/cpp/android_lts_support.o 1>>"${BASEDIR}"/build.log 2>&1
 }

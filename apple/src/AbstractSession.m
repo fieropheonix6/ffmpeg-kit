@@ -19,7 +19,6 @@
 
 #import "AbstractSession.h"
 #import "AtomicLong.h"
-#import "ExecuteCallback.h"
 #import "FFmpegKit.h"
 #import "FFmpegKitConfig.h"
 #import "LogCallback.h"
@@ -29,9 +28,10 @@ int const AbstractSessionDefaultTimeoutForAsynchronousMessagesInTransmit = 5000;
 
 static AtomicLong *sessionIdGenerator = nil;
 
+extern void addSessionToSessionHistory(id<Session> session);
+
 @implementation AbstractSession {
     long _sessionId;
-    ExecuteCallback _executeCallback;
     LogCallback _logCallback;
     NSDate* _createTime;
     NSDate* _startTime;
@@ -49,11 +49,10 @@ static AtomicLong *sessionIdGenerator = nil;
     sessionIdGenerator = [[AtomicLong alloc] initWithValue:1];
 }
 
-- (instancetype)init:(NSArray*)arguments withExecuteCallback:(ExecuteCallback)executeCallback withLogCallback:(LogCallback)logCallback withLogRedirectionStrategy:(LogRedirectionStrategy)logRedirectionStrategy {
+- (instancetype)init:(NSArray*)arguments withLogCallback:(LogCallback)logCallback withLogRedirectionStrategy:(LogRedirectionStrategy)logRedirectionStrategy {
     self = [super init];
     if (self) {
         _sessionId = [sessionIdGenerator getAndIncrement];
-        _executeCallback = executeCallback;
         _logCallback = logCallback;
         _createTime = [NSDate date];
         _startTime = nil;
@@ -65,13 +64,11 @@ static AtomicLong *sessionIdGenerator = nil;
         _returnCode = nil;
         _failStackTrace = nil;
         _logRedirectionStrategy = logRedirectionStrategy;
+
+        addSessionToSessionHistory(self);
     }
 
     return self;
-}
-
-- (ExecuteCallback)getExecuteCallback {
-    return _executeCallback;
 }
 
 - (LogCallback)getLogCallback {
@@ -109,7 +106,7 @@ static AtomicLong *sessionIdGenerator = nil;
 }
 
 - (NSString*)getCommand {
-    return [FFmpegKit argumentsToString:_arguments];
+    return [FFmpegKitConfig argumentsToString:_arguments];
 }
 
 - (void)waitForAsynchronousMessagesInTransmit:(int)timeout {
@@ -222,6 +219,11 @@ static AtomicLong *sessionIdGenerator = nil;
 }
 
 - (BOOL)isFFprobe {
+    // IMPLEMENTED IN SUBCLASSES
+    return false;
+}
+
+- (BOOL)isMediaInformation {
     // IMPLEMENTED IN SUBCLASSES
     return false;
 }

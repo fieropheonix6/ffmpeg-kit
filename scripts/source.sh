@@ -8,12 +8,12 @@ get_library_source() {
   case $1 in
   config)
     SOURCE_REPO_URL="https://github.com/tanersener/gnu-config"
-    SOURCE_ID="v20201222"
+    SOURCE_ID="v20210814"
     SOURCE_TYPE="TAG"
     ;;
   chromaprint)
     SOURCE_REPO_URL="https://github.com/tanersener/chromaprint"
-    SOURCE_ID="v1.5.0"
+    SOURCE_ID="v1.5.1"
     SOURCE_TYPE="TAG"
     ;;
   cpu-features)
@@ -23,33 +23,33 @@ get_library_source() {
     ;;
   dav1d)
     SOURCE_REPO_URL="https://github.com/tanersener/dav1d"
-    SOURCE_ID="0.8.2"
+    SOURCE_ID="0.9.2"
     SOURCE_TYPE="TAG"
     ;;
   expat)
     SOURCE_REPO_URL="https://github.com/tanersener/libexpat"
-    SOURCE_ID="R_2_2_10"
+    SOURCE_ID="R_2_4_2"
     SOURCE_TYPE="TAG"
     ;;
   ffmpeg)
     SOURCE_REPO_URL="https://github.com/tanersener/FFmpeg"
-    SOURCE_ID="c0d0b1c4f6f804796488adf3e552be88c0cee1a4"
+    SOURCE_ID="30322ebe3c55d0fb18bea4ae04d0fcaf1f97d27f"
     SOURCE_TYPE="COMMIT"
-    SOURCE_GIT_DESCRIBE="n4.4-dev-3015-gc0d0b1c4f6" # git describe --tags
+    SOURCE_GIT_DESCRIBE="n4.5-dev-3393-g30322ebe3c" # git describe --tags
     ;;
   fontconfig)
     SOURCE_REPO_URL="https://github.com/tanersener/fontconfig"
-    SOURCE_ID="2.13.93"
+    SOURCE_ID="2.13.94"
     SOURCE_TYPE="TAG"
     ;;
   freetype)
     SOURCE_REPO_URL="https://github.com/tanersener/freetype2"
-    SOURCE_ID="VER-2-10-2"
+    SOURCE_ID="VER-2-11-1"
     SOURCE_TYPE="TAG"
     ;;
   fribidi)
     SOURCE_REPO_URL="https://github.com/tanersener/fribidi"
-    SOURCE_ID="v1.0.10"
+    SOURCE_ID="v1.0.11"
     SOURCE_TYPE="TAG"
     ;;
   giflib)
@@ -69,17 +69,17 @@ get_library_source() {
     ;;
   harfbuzz)
     SOURCE_REPO_URL="https://github.com/tanersener/harfbuzz"
-    SOURCE_ID="2.7.4"
+    SOURCE_ID="3.2.0"
     SOURCE_TYPE="TAG"
     ;;
   jpeg)
     SOURCE_REPO_URL="https://github.com/tanersener/libjpeg-turbo"
-    SOURCE_ID="2.0.6"
+    SOURCE_ID="2.1.2"
     SOURCE_TYPE="TAG"
     ;;
   kvazaar)
     SOURCE_REPO_URL="https://github.com/tanersener/kvazaar"
-    SOURCE_ID="v2.0.0"
+    SOURCE_ID="v2.1.0"
     SOURCE_TYPE="TAG"
     ;;
   lame)
@@ -94,12 +94,12 @@ get_library_source() {
     ;;
   libaom)
     SOURCE_REPO_URL="https://github.com/tanersener/libaom"
-    SOURCE_ID="v2.0.1"
+    SOURCE_ID="v3.2.0"
     SOURCE_TYPE="TAG"
     ;;
   libass)
     SOURCE_REPO_URL="https://github.com/tanersener/libass"
-    SOURCE_ID="0.15.0"
+    SOURCE_ID="0.15.2"
     SOURCE_TYPE="TAG"
     ;;
   libiconv)
@@ -114,7 +114,7 @@ get_library_source() {
     ;;
   libogg)
     SOURCE_REPO_URL="https://github.com/tanersener/ogg"
-    SOURCE_ID="v1.3.4"
+    SOURCE_ID="v1.3.5"
     SOURCE_TYPE="TAG"
     ;;
   libpng)
@@ -124,12 +124,12 @@ get_library_source() {
     ;;
   libsamplerate)
     SOURCE_REPO_URL="https://github.com/tanersener/libsamplerate"
-    SOURCE_ID="v0.1.9"
+    SOURCE_ID="0.2.2"
     SOURCE_TYPE="TAG"
     ;;
   libsndfile)
     SOURCE_REPO_URL="https://github.com/tanersener/libsndfile"
-    SOURCE_ID="v1.0.30"
+    SOURCE_ID="1.0.31"
     SOURCE_TYPE="TAG"
     ;;
   libtheora)
@@ -154,22 +154,22 @@ get_library_source() {
     ;;
   libvpx)
     SOURCE_REPO_URL="https://github.com/tanersener/libvpx"
-    SOURCE_ID="v1.9.0"
+    SOURCE_ID="v1.11.0"
     SOURCE_TYPE="TAG"
     ;;
   libwebp)
     SOURCE_REPO_URL="https://github.com/tanersener/libwebp"
-    SOURCE_ID="v1.1.0"
+    SOURCE_ID="v1.2.1"
     SOURCE_TYPE="TAG"
     ;;
   libxml2)
     SOURCE_REPO_URL="https://github.com/tanersener/libxml2"
-    SOURCE_ID="v2.9.10"
+    SOURCE_ID="v2.9.12"
     SOURCE_TYPE="TAG"
     ;;
   nettle)
     SOURCE_REPO_URL="https://github.com/tanersener/nettle"
-    SOURCE_ID="nettle_3.7_release_20210104"
+    SOURCE_ID="nettle_3.7.3_release_20210606"
     SOURCE_TYPE="TAG"
     ;;
   opencore-amr)
@@ -180,6 +180,11 @@ get_library_source() {
   openh264)
     SOURCE_REPO_URL="https://github.com/tanersener/openh264"
     SOURCE_ID="v2.1.1"
+    SOURCE_TYPE="TAG"
+    ;;
+  openssl)
+    SOURCE_REPO_URL="https://github.com/tanersener/openssl"
+    SOURCE_ID="openssl-3.0.1"
     SOURCE_TYPE="TAG"
     ;;
   opus)
@@ -204,7 +209,7 @@ get_library_source() {
     ;;
   snappy)
     SOURCE_REPO_URL="https://github.com/tanersener/snappy"
-    SOURCE_ID="1.1.8"
+    SOURCE_ID="1.1.9"
     SOURCE_TYPE="TAG"
     ;;
   soxr)
@@ -215,6 +220,11 @@ get_library_source() {
   speex)
     SOURCE_REPO_URL="https://github.com/tanersener/speex"
     SOURCE_ID="Speex-1.2.0"
+    SOURCE_TYPE="TAG"
+    ;;
+  srt)
+    SOURCE_REPO_URL="https://github.com/tanersener/srt"
+    SOURCE_ID="v1.4.4"
     SOURCE_TYPE="TAG"
     ;;
   tesseract)
@@ -239,7 +249,7 @@ get_library_source() {
     ;;
   x264)
     SOURCE_REPO_URL="https://github.com/tanersener/x264"
-    SOURCE_ID="d198931a63049db1f2c92d96c34904c69fde8117"
+    SOURCE_ID="5db6aa6cab1b146e07b60cc1736a01f21da01154"
     SOURCE_TYPE="COMMIT" # COMMIT -> r3027
     ;;
   x265)
@@ -250,6 +260,11 @@ get_library_source() {
   xvidcore)
     SOURCE_REPO_URL="https://github.com/tanersener/xvidcore"
     SOURCE_ID="release-1_3_7"
+    SOURCE_TYPE="TAG"
+    ;;
+  zimg)
+    SOURCE_REPO_URL="https://github.com/tanersener/zimg"
+    SOURCE_ID="release-3.0.3"
     SOURCE_TYPE="TAG"
     ;;
   esac
