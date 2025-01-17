@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021 Taner Sener
+ * Copyright (c) 2018-2022 Taner Sener
  *
  * This file is part of FFmpegKit.
  *
@@ -19,6 +19,8 @@
 
 package com.arthenica.ffmpegkit;
 
+import android.content.ContentProvider;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
@@ -40,16 +42,56 @@ import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.StringTokenizer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * <p>Configuration class of <code>FFmpegKit</code> library.
  */
 public class FFmpegKitConfig {
+
+    static class SAFProtocolUrl {
+        private final Integer safId;
+        private final Uri uri;
+        private final String openMode;
+        private final ContentResolver contentResolver;
+        private ParcelFileDescriptor parcelFileDescriptor;
+
+        public SAFProtocolUrl(final Integer safId, final Uri uri, final String openMode, final ContentResolver contentResolver) {
+            this.safId = safId;
+            this.uri = uri;
+            this.openMode = openMode;
+            this.contentResolver = contentResolver;
+        }
+
+        public Integer getSafId() {
+            return safId;
+        }
+
+        public Uri getUri() {
+            return uri;
+        }
+
+        public String getOpenMode() {
+            return openMode;
+        }
+
+        public ContentResolver getContentResolver() {
+            return contentResolver;
+        }
+
+        public void setParcelFileDescriptor(final ParcelFileDescriptor parcelFileDescriptor) {
+            this.parcelFileDescriptor = parcelFileDescriptor;
+        }
+
+        public ParcelFileDescriptor getParcelFileDescriptor() {
+            return parcelFileDescriptor;
+        }
+    }
 
     /**
      * The tag used for logging.
@@ -62,9 +104,9 @@ public class FFmpegKitConfig {
     static final String FFMPEG_KIT_NAMED_PIPE_PREFIX = "fk_pipe_";
 
     /**
-     * Generates ids for named ffmpeg kit pipes.
+     * Generates ids for named ffmpeg kit pipes and saf protocol urls.
      */
-    private static final AtomicLong pipeIndexGenerator;
+    private static final AtomicInteger uniqueIdGenerator;
 
     private static Level activeLogLevel;
 
@@ -78,10 +120,13 @@ public class FFmpegKitConfig {
     private static ExecutorService asyncExecutorService;
 
     /* Global callbacks */
-    private static LogCallback globalLogCallbackFunction;
-    private static StatisticsCallback globalStatisticsCallbackFunction;
-    private static ExecuteCallback globalExecuteCallbackFunction;
-    private static final SparseArray<ParcelFileDescriptor> pfdMap;
+    private static LogCallback globalLogCallback;
+    private static StatisticsCallback globalStatisticsCallback;
+    private static FFmpegSessionCompleteCallback globalFFmpegSessionCompleteCallback;
+    private static FFprobeSessionCompleteCallback globalFFprobeSessionCompleteCallback;
+    private static MediaInformationSessionCompleteCallback globalMediaInformationSessionCompleteCallback;
+    private static final SparseArray<SAFProtocolUrl> safIdMap;
+    private static final SparseArray<SAFProtocolUrl> safFileDescriptorMap;
     private static LogRedirectionStrategy globalLogRedirectionStrategy;
 
     static {
@@ -99,9 +144,7 @@ public class FFmpegKitConfig {
 
         NativeLoader.loadFFmpegKit(nativeFFmpegTriedAndFailed);
 
-        android.util.Log.i(FFmpegKitConfig.TAG, String.format("Loaded ffmpeg-kit-%s-%s-%s-%s.", NativeLoader.loadPackageName(), NativeLoader.loadAbi(), NativeLoader.loadVersion(), NativeLoader.loadBuildDate()));
-
-        pipeIndexGenerator = new AtomicLong(1);
+        uniqueIdGenerator = new AtomicInteger(1);
 
         /* NATIVE LOG LEVEL IS RECEIVED ONLY ON STARTUP */
         activeLogLevel = Level.from(NativeLoader.loadLogLevel());
@@ -120,14 +163,17 @@ public class FFmpegKitConfig {
         sessionHistoryList = new LinkedList<>();
         sessionHistoryLock = new Object();
 
-        globalLogCallbackFunction = null;
-        globalStatisticsCallbackFunction = null;
-        globalExecuteCallbackFunction = null;
+        globalLogCallback = null;
+        globalStatisticsCallback = null;
+        globalFFmpegSessionCompleteCallback = null;
+        globalFFprobeSessionCompleteCallback = null;
+        globalMediaInformationSessionCompleteCallback = null;
 
-        pfdMap = new SparseArray<>();
+        safIdMap = new SparseArray<>();
+        safFileDescriptorMap = new SparseArray<>();
         globalLogRedirectionStrategy = LogRedirectionStrategy.PRINT_LOGS_WHEN_NO_CALLBACKS_DEFINED;
 
-        NativeLoader.enableRedirection();
+        android.util.Log.i(FFmpegKitConfig.TAG, String.format("Loaded ffmpeg-kit-%s-%s-%s-%s.", NativeLoader.loadPackageName(), NativeLoader.loadAbi(), NativeLoader.loadVersion(), NativeLoader.loadBuildDate()));
     }
 
     /**
@@ -195,12 +241,12 @@ public class FFmpegKitConfig {
                     // NOTIFY SESSION CALLBACK DEFINED
                     session.getLogCallback().apply(log);
                 } catch (final Exception e) {
-                    android.util.Log.e(FFmpegKitConfig.TAG, String.format("Exception thrown inside session LogCallback block.%s", Exceptions.getStackTraceString(e)));
+                    android.util.Log.e(FFmpegKitConfig.TAG, String.format("Exception thrown inside session log callback.%s", Exceptions.getStackTraceString(e)));
                 }
             }
         }
 
-        final LogCallback globalLogCallbackFunction = FFmpegKitConfig.globalLogCallbackFunction;
+        final LogCallback globalLogCallbackFunction = FFmpegKitConfig.globalLogCallback;
         if (globalLogCallbackFunction != null) {
             globalCallbackDefined = true;
 
@@ -208,7 +254,7 @@ public class FFmpegKitConfig {
                 // NOTIFY GLOBAL CALLBACK DEFINED
                 globalLogCallbackFunction.apply(log);
             } catch (final Exception e) {
-                android.util.Log.e(FFmpegKitConfig.TAG, String.format("Exception thrown inside global LogCallback block.%s", Exceptions.getStackTraceString(e)));
+                android.util.Log.e(FFmpegKitConfig.TAG, String.format("Exception thrown inside global log callback.%s", Exceptions.getStackTraceString(e)));
             }
         }
 
@@ -228,13 +274,16 @@ public class FFmpegKitConfig {
                     return;
                 }
             }
+            break;
             case PRINT_LOGS_WHEN_NO_CALLBACKS_DEFINED: {
                 if (globalCallbackDefined || sessionCallbackDefined) {
                     return;
                 }
             }
+            break;
             case ALWAYS_PRINT_LOGS: {
             }
+            break;
         }
 
         // PRINT LOGS
@@ -285,7 +334,7 @@ public class FFmpegKitConfig {
      */
     private static void statistics(final long sessionId, final int videoFrameNumber,
                                    final float videoFps, final float videoQuality, final long size,
-                                   final int time, final double bitrate, final double speed) {
+                                   final double time, final double bitrate, final double speed) {
         final Statistics statistics = new Statistics(sessionId, videoFrameNumber, videoFps, videoQuality, size, time, bitrate, speed);
 
         final Session session = getSession(sessionId);
@@ -298,18 +347,18 @@ public class FFmpegKitConfig {
                     // NOTIFY SESSION CALLBACK IF DEFINED
                     ffmpegSession.getStatisticsCallback().apply(statistics);
                 } catch (final Exception e) {
-                    android.util.Log.e(FFmpegKitConfig.TAG, String.format("Exception thrown inside session StatisticsCallback block.%s", Exceptions.getStackTraceString(e)));
+                    android.util.Log.e(FFmpegKitConfig.TAG, String.format("Exception thrown inside session statistics callback.%s", Exceptions.getStackTraceString(e)));
                 }
             }
         }
 
-        final StatisticsCallback globalStatisticsCallbackFunction = FFmpegKitConfig.globalStatisticsCallbackFunction;
+        final StatisticsCallback globalStatisticsCallbackFunction = FFmpegKitConfig.globalStatisticsCallback;
         if (globalStatisticsCallbackFunction != null) {
             try {
                 // NOTIFY GLOBAL CALLBACK IF DEFINED
                 globalStatisticsCallbackFunction.apply(statistics);
             } catch (final Exception e) {
-                android.util.Log.e(FFmpegKitConfig.TAG, String.format("Exception thrown inside global StatisticsCallback block.%s", Exceptions.getStackTraceString(e)));
+                android.util.Log.e(FFmpegKitConfig.TAG, String.format("Exception thrown inside global statistics callback.%s", Exceptions.getStackTraceString(e)));
             }
         }
     }
@@ -379,14 +428,14 @@ public class FFmpegKitConfig {
                 String mappedFontName = mapping.getValue();
 
                 if ((fontName != null) && (mappedFontName != null) && (fontName.trim().length() > 0) && (mappedFontName.trim().length() > 0)) {
-                    fontNameMappingBlock.append("        <match target=\"pattern\">\n");
-                    fontNameMappingBlock.append("                <test qual=\"any\" name=\"family\">\n");
-                    fontNameMappingBlock.append(String.format("                        <string>%s</string>\n", fontName));
-                    fontNameMappingBlock.append("                </test>\n");
-                    fontNameMappingBlock.append("                <edit name=\"family\" mode=\"assign\" binding=\"same\">\n");
-                    fontNameMappingBlock.append(String.format("                        <string>%s</string>\n", mappedFontName));
-                    fontNameMappingBlock.append("                </edit>\n");
-                    fontNameMappingBlock.append("        </match>\n");
+                    fontNameMappingBlock.append("    <match target=\"pattern\">\n");
+                    fontNameMappingBlock.append("        <test qual=\"any\" name=\"family\">\n");
+                    fontNameMappingBlock.append(String.format("            <string>%s</string>\n", fontName));
+                    fontNameMappingBlock.append("        </test>\n");
+                    fontNameMappingBlock.append("        <edit name=\"family\" mode=\"assign\" binding=\"same\">\n");
+                    fontNameMappingBlock.append(String.format("            <string>%s</string>\n", mappedFontName));
+                    fontNameMappingBlock.append("        </edit>\n");
+                    fontNameMappingBlock.append("    </match>\n");
 
                     validFontNameMappingCount++;
                 }
@@ -404,7 +453,7 @@ public class FFmpegKitConfig {
             fontConfigBuilder.append("</dir>\n");
         }
         fontConfigBuilder.append(fontNameMappingBlock);
-        fontConfigBuilder.append("</fontconfig>");
+        fontConfigBuilder.append("</fontconfig>\n");
 
         final AtomicReference<FileOutputStream> reference = new AtomicReference<>();
         try {
@@ -457,7 +506,7 @@ public class FFmpegKitConfig {
             }
         }
 
-        final String newFFmpegPipePath = MessageFormat.format("{0}{1}{2}{3}", pipesDir, File.separator, FFMPEG_KIT_NAMED_PIPE_PREFIX, pipeIndexGenerator.getAndIncrement());
+        final String newFFmpegPipePath = MessageFormat.format("{0}{1}{2}{3}", pipesDir, File.separator, FFMPEG_KIT_NAMED_PIPE_PREFIX, uniqueIdGenerator.getAndIncrement());
 
         // FIRST CLOSE OLD PIPES WITH THE SAME NAME
         closeFFmpegPipe(newFFmpegPipePath);
@@ -603,7 +652,6 @@ public class FFmpegKitConfig {
      * @param ffmpegSession FFmpeg session which includes command options/arguments
      */
     public static void ffmpegExecute(final FFmpegSession ffmpegSession) {
-        addSession(ffmpegSession);
         ffmpegSession.startRunning();
 
         try {
@@ -611,7 +659,7 @@ public class FFmpegKitConfig {
             ffmpegSession.complete(new ReturnCode(returnCode));
         } catch (final Exception e) {
             ffmpegSession.fail(e);
-            android.util.Log.w(FFmpegKitConfig.TAG, String.format("FFmpeg execute failed: %s.%s", FFmpegKit.argumentsToString(ffmpegSession.getArguments()), Exceptions.getStackTraceString(e)));
+            android.util.Log.w(FFmpegKitConfig.TAG, String.format("FFmpeg execute failed: %s.%s", FFmpegKitConfig.argumentsToString(ffmpegSession.getArguments()), Exceptions.getStackTraceString(e)));
         }
     }
 
@@ -621,7 +669,6 @@ public class FFmpegKitConfig {
      * @param ffprobeSession FFprobe session which includes command options/arguments
      */
     public static void ffprobeExecute(final FFprobeSession ffprobeSession) {
-        addSession(ffprobeSession);
         ffprobeSession.startRunning();
 
         try {
@@ -629,7 +676,7 @@ public class FFmpegKitConfig {
             ffprobeSession.complete(new ReturnCode(returnCode));
         } catch (final Exception e) {
             ffprobeSession.fail(e);
-            android.util.Log.w(FFmpegKitConfig.TAG, String.format("FFprobe execute failed: %s.%s", FFmpegKit.argumentsToString(ffprobeSession.getArguments()), Exceptions.getStackTraceString(e)));
+            android.util.Log.w(FFmpegKitConfig.TAG, String.format("FFprobe execute failed: %s.%s", FFmpegKitConfig.argumentsToString(ffprobeSession.getArguments()), Exceptions.getStackTraceString(e)));
         }
     }
 
@@ -640,101 +687,123 @@ public class FFmpegKitConfig {
      * @param waitTimeout             max time to wait until media information is transmitted
      */
     public static void getMediaInformationExecute(final MediaInformationSession mediaInformationSession, final int waitTimeout) {
-        addSession(mediaInformationSession);
         mediaInformationSession.startRunning();
 
         try {
             final int returnCodeValue = nativeFFprobeExecute(mediaInformationSession.getSessionId(), mediaInformationSession.getArguments());
             final ReturnCode returnCode = new ReturnCode(returnCodeValue);
             mediaInformationSession.complete(returnCode);
-            if (returnCode.isSuccess()) {
-                MediaInformation mediaInformation = MediaInformationJsonParser.fromWithError(mediaInformationSession.getAllLogsAsString(waitTimeout));
+            if (returnCode.isValueSuccess()) {
+                List<Log> allLogs = mediaInformationSession.getAllLogs(waitTimeout);
+                final StringBuilder ffprobeJsonOutput = new StringBuilder();
+                for (int i = 0, allLogsSize = allLogs.size(); i < allLogsSize; i++) {
+                    Log log = allLogs.get(i);
+                    if (log.getLevel() == Level.AV_LOG_STDERR) {
+                        ffprobeJsonOutput.append(log.getMessage());
+                    }
+                }
+                MediaInformation mediaInformation = MediaInformationJsonParser.fromWithError(ffprobeJsonOutput.toString());
                 mediaInformationSession.setMediaInformation(mediaInformation);
             }
         } catch (final Exception e) {
             mediaInformationSession.fail(e);
-            android.util.Log.w(FFmpegKitConfig.TAG, String.format("Get media information execute failed: %s.%s", FFmpegKit.argumentsToString(mediaInformationSession.getArguments()), Exceptions.getStackTraceString(e)));
+            android.util.Log.w(FFmpegKitConfig.TAG, String.format("Get media information execute failed: %s.%s", FFmpegKitConfig.argumentsToString(mediaInformationSession.getArguments()), Exceptions.getStackTraceString(e)));
         }
     }
 
     /**
-     * <p>Asynchronously executes the FFmpeg session provided.
+     * <p>Starts an asynchronous FFmpeg execution for the given session.
+     *
+     * <p>Note that this method returns immediately and does not wait the execution to complete.
+     * You must use an {@link FFmpegSessionCompleteCallback} if you want to be notified about the
+     * result.
      *
      * @param ffmpegSession FFmpeg session which includes command options/arguments
      */
     public static void asyncFFmpegExecute(final FFmpegSession ffmpegSession) {
-        addSession(ffmpegSession);
-
         AsyncFFmpegExecuteTask asyncFFmpegExecuteTask = new AsyncFFmpegExecuteTask(ffmpegSession);
         Future<?> future = asyncExecutorService.submit(asyncFFmpegExecuteTask);
         ffmpegSession.setFuture(future);
     }
 
     /**
-     * <p>Asynchronously executes the FFmpeg session provided.
+     * <p>Starts an asynchronous FFmpeg execution for the given session.
+     *
+     * <p>Note that this method returns immediately and does not wait the execution to complete.
+     * You must use an {@link FFmpegSessionCompleteCallback} if you want to be notified about the
+     * result.
      *
      * @param ffmpegSession   FFmpeg session which includes command options/arguments
      * @param executorService executor service that will be used to run this asynchronous operation
      */
     public static void asyncFFmpegExecute(final FFmpegSession ffmpegSession, final ExecutorService executorService) {
-        addSession(ffmpegSession);
-
         AsyncFFmpegExecuteTask asyncFFmpegExecuteTask = new AsyncFFmpegExecuteTask(ffmpegSession);
         Future<?> future = executorService.submit(asyncFFmpegExecuteTask);
         ffmpegSession.setFuture(future);
     }
 
     /**
-     * <p>Asynchronously executes the FFprobe session provided.
+     * <p>Starts an asynchronous FFprobe execution for the given session.
+     *
+     * <p>Note that this method returns immediately and does not wait the execution to complete.
+     * You must use an {@link FFprobeSessionCompleteCallback} if you want to be notified about the
+     * result.
      *
      * @param ffprobeSession FFprobe session which includes command options/arguments
      */
     public static void asyncFFprobeExecute(final FFprobeSession ffprobeSession) {
-        addSession(ffprobeSession);
-
         AsyncFFprobeExecuteTask asyncFFmpegExecuteTask = new AsyncFFprobeExecuteTask(ffprobeSession);
         Future<?> future = asyncExecutorService.submit(asyncFFmpegExecuteTask);
         ffprobeSession.setFuture(future);
     }
 
     /**
-     * <p>Asynchronously executes the FFprobe session provided.
+     * <p>Starts an asynchronous FFprobe execution for the given session.
+     *
+     * <p>Note that this method returns immediately and does not wait the execution to complete.
+     * You must use an {@link FFprobeSessionCompleteCallback} if you want to be notified about the
+     * result.
      *
      * @param ffprobeSession  FFprobe session which includes command options/arguments
      * @param executorService executor service that will be used to run this asynchronous operation
      */
     public static void asyncFFprobeExecute(final FFprobeSession ffprobeSession, final ExecutorService executorService) {
-        addSession(ffprobeSession);
-
         AsyncFFprobeExecuteTask asyncFFmpegExecuteTask = new AsyncFFprobeExecuteTask(ffprobeSession);
         Future<?> future = executorService.submit(asyncFFmpegExecuteTask);
         ffprobeSession.setFuture(future);
     }
 
     /**
-     * <p>Asynchronously executes the media information session provided.
+     * <p>Starts an asynchronous FFprobe execution for the given media information session.
      *
-     * @param mediaInformationSession media information session which includes command options/arguments
+     * <p>Note that this method returns immediately and does not wait the execution to complete.
+     * You must use a {@link MediaInformationSessionCompleteCallback} if you want to be notified
+     * about the result.
+     *
+     * @param mediaInformationSession media information session which includes command
+     *                                options/arguments
      * @param waitTimeout             max time to wait until media information is transmitted
      */
     public static void asyncGetMediaInformationExecute(final MediaInformationSession mediaInformationSession, final int waitTimeout) {
-        addSession(mediaInformationSession);
-
         AsyncGetMediaInformationTask asyncGetMediaInformationTask = new AsyncGetMediaInformationTask(mediaInformationSession, waitTimeout);
         Future<?> future = asyncExecutorService.submit(asyncGetMediaInformationTask);
         mediaInformationSession.setFuture(future);
     }
 
     /**
-     * <p>Asynchronously executes the media information session provided.
+     * <p>Starts an asynchronous FFprobe execution for the given media information session.
      *
-     * @param mediaInformationSession media information session which includes command options/arguments
-     * @param executorService         executor service that will be used to run this asynchronous operation
+     * <p>Note that this method returns immediately and does not wait the execution to complete.
+     * You must use a {@link MediaInformationSessionCompleteCallback} if you want to be notified
+     * about the result.
+     *
+     * @param mediaInformationSession media information session which includes command
+     *                                options/arguments
+     * @param executorService         executor service that will be used to run this asynchronous
+     *                                operation
      * @param waitTimeout             max time to wait until media information is transmitted
      */
     public static void asyncGetMediaInformationExecute(final MediaInformationSession mediaInformationSession, final ExecutorService executorService, final int waitTimeout) {
-        addSession(mediaInformationSession);
-
         AsyncGetMediaInformationTask asyncGetMediaInformationTask = new AsyncGetMediaInformationTask(mediaInformationSession, waitTimeout);
         Future<?> future = executorService.submit(asyncGetMediaInformationTask);
         mediaInformationSession.setFuture(future);
@@ -772,42 +841,82 @@ public class FFmpegKitConfig {
     }
 
     /**
-     * <p>Sets a global callback function to redirect FFmpeg/FFprobe logs.
+     * <p>Sets a global callback to redirect FFmpeg/FFprobe logs.
      *
-     * @param logCallback log callback function or null to disable a previously defined
-     *                    callback
+     * @param logCallback log callback or null to disable a previously defined callback
      */
     public static void enableLogCallback(final LogCallback logCallback) {
-        globalLogCallbackFunction = logCallback;
+        globalLogCallback = logCallback;
     }
 
     /**
-     * <p>Sets a global callback function to redirect FFmpeg statistics.
+     * <p>Sets a global callback to redirect FFmpeg statistics.
      *
-     * @param statisticsCallback statistics callback function or null to disable a previously
+     * @param statisticsCallback statistics callback or null to disable a previously
      *                           defined callback
      */
     public static void enableStatisticsCallback(final StatisticsCallback statisticsCallback) {
-        globalStatisticsCallbackFunction = statisticsCallback;
+        globalStatisticsCallback = statisticsCallback;
     }
 
     /**
-     * <p>Sets a global callback function to receive execution results.
+     * <p>Sets a global FFmpegSessionCompleteCallback to receive execution results for FFmpeg
+     * sessions.
      *
-     * @param executeCallback execute callback function or null to disable a previously
-     *                        defined callback
+     * @param ffmpegSessionCompleteCallback complete callback or null to disable a
+     *                                      previously defined callback
      */
-    public static void enableExecuteCallback(final ExecuteCallback executeCallback) {
-        globalExecuteCallbackFunction = executeCallback;
+    public static void enableFFmpegSessionCompleteCallback(final FFmpegSessionCompleteCallback ffmpegSessionCompleteCallback) {
+        globalFFmpegSessionCompleteCallback = ffmpegSessionCompleteCallback;
     }
 
     /**
-     * <p>Returns the global execute callback function.
+     * <p>Returns the global FFmpegSessionCompleteCallback set.
      *
-     * @return global execute callback function
+     * @return global FFmpegSessionCompleteCallback or null if it is not set
      */
-    static ExecuteCallback getExecuteCallback() {
-        return globalExecuteCallbackFunction;
+    public static FFmpegSessionCompleteCallback getFFmpegSessionCompleteCallback() {
+        return globalFFmpegSessionCompleteCallback;
+    }
+
+    /**
+     * <p>Sets a global FFprobeSessionCompleteCallback to receive execution results for FFprobe
+     * sessions.
+     *
+     * @param ffprobeSessionCompleteCallback complete callback or null to disable a
+     *                                       previously defined callback
+     */
+    public static void enableFFprobeSessionCompleteCallback(final FFprobeSessionCompleteCallback ffprobeSessionCompleteCallback) {
+        globalFFprobeSessionCompleteCallback = ffprobeSessionCompleteCallback;
+    }
+
+    /**
+     * <p>Returns the global FFprobeSessionCompleteCallback set.
+     *
+     * @return global FFprobeSessionCompleteCallback or null if it is not set
+     */
+    public static FFprobeSessionCompleteCallback getFFprobeSessionCompleteCallback() {
+        return globalFFprobeSessionCompleteCallback;
+    }
+
+    /**
+     * <p>Sets a global MediaInformationSessionCompleteCallback to receive execution results for
+     * MediaInformation sessions.
+     *
+     * @param mediaInformationSessionCompleteCallback complete callback or null to disable
+     *                                                a previously defined callback
+     */
+    public static void enableMediaInformationSessionCompleteCallback(final MediaInformationSessionCompleteCallback mediaInformationSessionCompleteCallback) {
+        globalMediaInformationSessionCompleteCallback = mediaInformationSessionCompleteCallback;
+    }
+
+    /**
+     * <p>Returns the global MediaInformationSessionCompleteCallback set.
+     *
+     * @return global MediaInformationSessionCompleteCallback or null if it is not set
+     */
+    public static MediaInformationSessionCompleteCallback getMediaInformationSessionCompleteCallback() {
+        return globalMediaInformationSessionCompleteCallback;
     }
 
     /**
@@ -831,15 +940,32 @@ public class FFmpegKitConfig {
         }
     }
 
+    static String extractExtensionFromSafDisplayName(final String safDisplayName) {
+        String rawExtension = safDisplayName;
+        if (safDisplayName.lastIndexOf(".") >= 0) {
+            rawExtension = safDisplayName.substring(safDisplayName.lastIndexOf("."));
+        }
+        try {
+            // workaround for https://issuetracker.google.com/issues/162440528: ANDROID_CREATE_DOCUMENT generating file names like "transcode.mp3 (2)"
+            return new StringTokenizer(rawExtension, " .").nextToken();
+        } catch (final Exception e) {
+            android.util.Log.w(TAG, String.format("Failed to extract extension from saf display name: %s.%s", safDisplayName, Exceptions.getStackTraceString(e)));
+            return "raw";
+        }
+    }
+
     /**
      * <p>Converts the given Structured Access Framework Uri (<code>"content:…"</code>) into an
-     * input/output url that can be used in FFmpeg and FFprobe commands.
+     * SAF protocol url that can be used in FFmpeg and FFprobe commands.
      *
-     * <p>Requires API Level >= 19. On older API levels it returns an empty url.
+     * <p>Requires API Level 19+. On older API levels it returns an empty url.
      *
+     * @param context  application context
+     * @param uri      SAF uri
+     * @param openMode file mode to use as defined in {@link ContentProvider#openFile ContentProvider.openFile}
      * @return input/output url that can be passed to FFmpegKit or FFprobeKit
      */
-    private static String getSafParameter(final Context context, final Uri uri, final String openMode) {
+    public static String getSafParameter(final Context context, final Uri uri, final String openMode) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT) {
             android.util.Log.i(TAG, String.format("getSafParameter is not supported on API Level %d", Build.VERSION.SDK_INT));
             return "";
@@ -852,35 +978,23 @@ public class FFmpegKitConfig {
             }
         } catch (final Throwable t) {
             android.util.Log.e(TAG, String.format("Failed to get %s column for %s.%s", DocumentsContract.Document.COLUMN_DISPLAY_NAME, uri.toString(), Exceptions.getStackTraceString(t)));
+            throw t;
         }
 
-        int fd = -1;
-        try {
-            ParcelFileDescriptor parcelFileDescriptor = context.getContentResolver().openFileDescriptor(uri, openMode);
-            fd = parcelFileDescriptor.getFd();
-            pfdMap.put(fd, parcelFileDescriptor);
-        } catch (final Throwable t) {
-            android.util.Log.e(TAG, String.format("Failed to obtain %s parcelFileDescriptor for %s.%s", openMode, uri.toString(), Exceptions.getStackTraceString(t)));
-        }
+        final int safId = uniqueIdGenerator.getAndIncrement();
+        safIdMap.put(safId, new SAFProtocolUrl(safId, uri, openMode, context.getContentResolver()));
 
-        // workaround for https://issuetracker.google.com/issues/162440528: ANDROID_CREATE_DOCUMENT generating file names like "transcode.mp3 (2)"
-        if (displayName.lastIndexOf('.') > 0 && displayName.lastIndexOf(' ') > displayName.lastIndexOf('.')) {
-            String extension = displayName.substring(displayName.lastIndexOf('.'), displayName.lastIndexOf(' '));
-            displayName += extension;
-        }
-        // spaces can break argument list parsing, see https://github.com/alexcohn/mobile-ffmpeg/pull/1#issuecomment-688643836
-        final char NBSP = (char) 0xa0;
-        return "saf:" + fd + "/" + displayName.replace(' ', NBSP);
+        return "saf:" + safId + "." + FFmpegKitConfig.extractExtensionFromSafDisplayName(displayName);
     }
 
     /**
      * <p>Converts the given Structured Access Framework Uri (<code>"content:…"</code>) into an
-     * input url that can be used in FFmpeg and FFprobe commands.
+     * SAF protocol url that can be used in FFmpeg and FFprobe commands.
      *
      * <p>Requires API Level &ge; 19. On older API levels it returns an empty url.
      *
      * @param context application context
-     * @param uri saf uri
+     * @param uri     SAF uri
      * @return input url that can be passed to FFmpegKit or FFprobeKit
      */
     public static String getSafParameterForRead(final Context context, final Uri uri) {
@@ -889,12 +1003,12 @@ public class FFmpegKitConfig {
 
     /**
      * <p>Converts the given Structured Access Framework Uri (<code>"content:…"</code>) into an
-     * output url that can be used in FFmpeg and FFprobe commands.
+     * SAF protocol url that can be used in FFmpeg and FFprobe commands.
      *
      * <p>Requires API Level &ge; 19. On older API levels it returns an empty url.
      *
      * @param context application context
-     * @param uri saf uri
+     * @param uri     SAF uri
      * @return output url that can be passed to FFmpegKit or FFprobeKit
      */
     public static String getSafParameterForWrite(final Context context, final Uri uri) {
@@ -902,20 +1016,57 @@ public class FFmpegKitConfig {
     }
 
     /**
-     * Called by saf_wrapper from native library to close a parcel file descriptor.
+     * Called from native library to open an SAF protocol url.
      *
-     * @param fd parcel file descriptor created for a saf uri
+     * @param safId SAF id part of an SAF protocol url
+     * @return file descriptor created for this SAF id or 0 if an error occurs
      */
-    private static void closeParcelFileDescriptor(final int fd) {
+    private static int safOpen(final int safId) {
         try {
-            ParcelFileDescriptor pfd = pfdMap.get(fd);
-            if (pfd != null) {
-                pfd.close();
-                pfdMap.delete(fd);
+            SAFProtocolUrl safUrl = safIdMap.get(safId);
+            if (safUrl != null) {
+                final ParcelFileDescriptor parcelFileDescriptor = safUrl.getContentResolver().openFileDescriptor(safUrl.getUri(), safUrl.getOpenMode());
+                safUrl.setParcelFileDescriptor(parcelFileDescriptor);
+                final int fd = parcelFileDescriptor.getFd();
+                safFileDescriptorMap.put(fd, safUrl);
+                return fd;
+            } else {
+                android.util.Log.e(TAG, String.format("SAF id %d not found.", safId));
             }
         } catch (final Throwable t) {
-            android.util.Log.e(TAG, String.format("Failed to close file descriptor: %d.%s", fd, Exceptions.getStackTraceString(t)));
+            android.util.Log.e(TAG, String.format("Failed to open SAF id: %d.%s", safId, Exceptions.getStackTraceString(t)));
         }
+
+        return 0;
+    }
+
+    /**
+     * Called from native library to close a file descriptor created for a SAF protocol url.
+     *
+     * @param fileDescriptor file descriptor that belongs to a SAF protocol url
+     * @return 1 if the given file descriptor is closed successfully, 0 if an error occurs
+     */
+    private static int safClose(final int fileDescriptor) {
+        try {
+            final SAFProtocolUrl safProtocolUrl = safFileDescriptorMap.get(fileDescriptor);
+            if (safProtocolUrl != null) {
+                ParcelFileDescriptor parcelFileDescriptor = safProtocolUrl.getParcelFileDescriptor();
+                if (parcelFileDescriptor != null) {
+                    safFileDescriptorMap.delete(fileDescriptor);
+                    safIdMap.delete(safProtocolUrl.getSafId());
+                    parcelFileDescriptor.close();
+                    return 1;
+                } else {
+                    android.util.Log.e(TAG, String.format("ParcelFileDescriptor for SAF fd %d not found.", fileDescriptor));
+                }
+            } else {
+                android.util.Log.e(TAG, String.format("SAF fd %d not found.", fileDescriptor));
+            }
+        } catch (final Throwable t) {
+            android.util.Log.e(TAG, String.format("Failed to close SAF fd: %d.%s", fileDescriptor, Exceptions.getStackTraceString(t)));
+        }
+
+        return 0;
     }
 
     /**
@@ -941,6 +1092,22 @@ public class FFmpegKitConfig {
             throw new IllegalArgumentException("Session history size must not exceed the hard limit!");
         } else if (sessionHistorySize > 0) {
             FFmpegKitConfig.sessionHistorySize = sessionHistorySize;
+            deleteExpiredSessions();
+        }
+    }
+
+    /**
+     * Deletes expired sessions.
+     */
+    private static void deleteExpiredSessions() {
+        while (sessionHistoryList.size() > sessionHistorySize) {
+            try {
+                Session expiredSession = sessionHistoryList.remove(0);
+                if (expiredSession != null) {
+                    sessionHistoryMap.remove(expiredSession.getSessionId());
+                }
+            } catch (final IndexOutOfBoundsException ignored) {
+            }
         }
     }
 
@@ -954,18 +1121,13 @@ public class FFmpegKitConfig {
 
             /*
              * ASYNC SESSIONS CALL THIS METHOD TWICE
-             * THIS CHECK PREVENTS ADDING THE SAME SESSION TWICE
+             * THIS CHECK PREVENTS ADDING THE SAME SESSION AGAIN
              */
             final boolean sessionAlreadyAdded = sessionHistoryMap.containsKey(session.getSessionId());
             if (!sessionAlreadyAdded) {
                 sessionHistoryMap.put(session.getSessionId(), session);
                 sessionHistoryList.add(session);
-                if (sessionHistoryList.size() > sessionHistorySize) {
-                    try {
-                        sessionHistoryList.remove(0);
-                    } catch (final IndexOutOfBoundsException ignored) {
-                    }
-                }
+                deleteExpiredSessions();
             }
         }
     }
@@ -1028,11 +1190,22 @@ public class FFmpegKitConfig {
     }
 
     /**
+     * <p>Clears all, including ongoing, sessions in the session history.
+     * <p>Note that callbacks cannot be triggered for deleted sessions.
+     */
+    public static void clearSessions() {
+        synchronized (sessionHistoryLock) {
+            sessionHistoryList.clear();
+            sessionHistoryMap.clear();
+        }
+    }
+
+    /**
      * <p>Returns all FFmpeg sessions in the session history.
      *
      * @return all FFmpeg sessions in the session history
      */
-    static List<FFmpegSession> getFFmpegSessions() {
+    public static List<FFmpegSession> getFFmpegSessions() {
         final LinkedList<FFmpegSession> list = new LinkedList<>();
 
         synchronized (sessionHistoryLock) {
@@ -1051,13 +1224,32 @@ public class FFmpegKitConfig {
      *
      * @return all FFprobe sessions in the session history
      */
-    static List<FFprobeSession> getFFprobeSessions() {
+    public static List<FFprobeSession> getFFprobeSessions() {
         final LinkedList<FFprobeSession> list = new LinkedList<>();
 
         synchronized (sessionHistoryLock) {
             for (Session session : sessionHistoryList) {
                 if (session.isFFprobe()) {
                     list.add((FFprobeSession) session);
+                }
+            }
+        }
+
+        return list;
+    }
+
+    /**
+     * <p>Returns all MediaInformation sessions in the session history.
+     *
+     * @return all MediaInformation sessions in the session history
+     */
+    public static List<MediaInformationSession> getMediaInformationSessions() {
+        final LinkedList<MediaInformationSession> list = new LinkedList<>();
+
+        synchronized (sessionHistoryLock) {
+            for (Session session : sessionHistoryList) {
+                if (session.isMediaInformation()) {
+                    list.add((MediaInformationSession) session);
                 }
             }
         }
@@ -1101,6 +1293,96 @@ public class FFmpegKitConfig {
      */
     public static void setLogRedirectionStrategy(final LogRedirectionStrategy logRedirectionStrategy) {
         FFmpegKitConfig.globalLogRedirectionStrategy = logRedirectionStrategy;
+    }
+
+    /**
+     * Converts session state to string.
+     *
+     * @param state session state
+     * @return string value
+     */
+    public static String sessionStateToString(final SessionState state) {
+        return state.toString();
+    }
+
+    /**
+     * <p>Parses the given command into arguments. Uses space character to split the arguments.
+     * Supports single and double quote characters.
+     *
+     * @param command string command
+     * @return array of arguments
+     */
+    public static String[] parseArguments(final String command) {
+        final List<String> argumentList = new ArrayList<>();
+        StringBuilder currentArgument = new StringBuilder();
+
+        boolean singleQuoteStarted = false;
+        boolean doubleQuoteStarted = false;
+
+        for (int i = 0; i < command.length(); i++) {
+            final Character previousChar;
+            if (i > 0) {
+                previousChar = command.charAt(i - 1);
+            } else {
+                previousChar = null;
+            }
+            final char currentChar = command.charAt(i);
+
+            if (currentChar == ' ') {
+                if (singleQuoteStarted || doubleQuoteStarted) {
+                    currentArgument.append(currentChar);
+                } else if (currentArgument.length() > 0) {
+                    argumentList.add(currentArgument.toString());
+                    currentArgument = new StringBuilder();
+                }
+            } else if (currentChar == '\'' && (previousChar == null || previousChar != '\\')) {
+                if (singleQuoteStarted) {
+                    singleQuoteStarted = false;
+                } else if (doubleQuoteStarted) {
+                    currentArgument.append(currentChar);
+                } else {
+                    singleQuoteStarted = true;
+                }
+            } else if (currentChar == '\"' && (previousChar == null || previousChar != '\\')) {
+                if (doubleQuoteStarted) {
+                    doubleQuoteStarted = false;
+                } else if (singleQuoteStarted) {
+                    currentArgument.append(currentChar);
+                } else {
+                    doubleQuoteStarted = true;
+                }
+            } else {
+                currentArgument.append(currentChar);
+            }
+        }
+
+        if (currentArgument.length() > 0) {
+            argumentList.add(currentArgument.toString());
+        }
+
+        return argumentList.toArray(new String[0]);
+    }
+
+    /**
+     * <p>Concatenates arguments into a string adding a space character between two arguments.
+     *
+     * @param arguments arguments
+     * @return concatenated string containing all arguments
+     */
+    public static String argumentsToString(final String[] arguments) {
+        if (arguments == null) {
+            return "null";
+        }
+
+        StringBuilder stringBuilder = new StringBuilder();
+        for (int i = 0; i < arguments.length; i++) {
+            if (i > 0) {
+                stringBuilder.append(" ");
+            }
+            stringBuilder.append(arguments[i]);
+        }
+
+        return stringBuilder.toString();
     }
 
     /**
@@ -1164,7 +1446,7 @@ public class FFmpegKitConfig {
     native static int nativeFFprobeExecute(final long sessionId, final String[] arguments);
 
     /**
-     * <p>Cancels an ongoing FFmpeg operation natively. This function does not wait for termination
+     * <p>Cancels an ongoing FFmpeg operation natively. This method does not wait for termination
      * to complete and returns immediately.
      *
      * @param sessionId id of the session

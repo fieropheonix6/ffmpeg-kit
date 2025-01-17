@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Taner Sener
+ * Copyright (c) 2021-2022 Taner Sener
  *
  * This file is part of FFmpegKit.
  *
@@ -17,43 +17,47 @@
  *  along with FFmpegKit.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#import "ExecuteCallback.h"
 #import "FFprobeSession.h"
 #import "FFmpegKitConfig.h"
 #import "LogCallback.h"
 
-@implementation FFprobeSession
-
-- (instancetype)init:(NSArray*)arguments {
-
-    self = [super init:arguments withExecuteCallback:nil withLogCallback:nil withLogRedirectionStrategy:[FFmpegKitConfig getLogRedirectionStrategy]];
-
-    return self;
+@implementation FFprobeSession {
+    FFprobeSessionCompleteCallback _completeCallback;
 }
 
 + (void)initialize {
     // EMPTY INITIALIZE
 }
 
-- (instancetype)init:(NSArray*)arguments withExecuteCallback:(ExecuteCallback)executeCallback {
++ (instancetype)create:(NSArray*)arguments {
+    return [[self alloc] init:arguments withCompleteCallback:nil withLogCallback:nil withLogRedirectionStrategy:[FFmpegKitConfig getLogRedirectionStrategy]];
+}
 
-    self = [super init:arguments withExecuteCallback:executeCallback withLogCallback:nil withLogRedirectionStrategy:[FFmpegKitConfig getLogRedirectionStrategy]];
++ (instancetype)create:(NSArray*)arguments withCompleteCallback:(FFprobeSessionCompleteCallback)completeCallback {
+    return [[self alloc] init:arguments withCompleteCallback:completeCallback withLogCallback:nil withLogRedirectionStrategy:[FFmpegKitConfig getLogRedirectionStrategy]];
+}
+
++ (instancetype)create:(NSArray*)arguments withCompleteCallback:(FFprobeSessionCompleteCallback)completeCallback withLogCallback:(LogCallback)logCallback {
+    return [[self alloc] init:arguments withCompleteCallback:completeCallback withLogCallback:logCallback withLogRedirectionStrategy:[FFmpegKitConfig getLogRedirectionStrategy]];
+}
+
++ (instancetype)create:(NSArray*)arguments withCompleteCallback:(FFprobeSessionCompleteCallback)completeCallback withLogCallback:(LogCallback)logCallback withLogRedirectionStrategy:(LogRedirectionStrategy)logRedirectionStrategy {
+    return [[self alloc] init:arguments withCompleteCallback:completeCallback withLogCallback:logCallback withLogRedirectionStrategy:logRedirectionStrategy];
+}
+
+- (instancetype)init:(NSArray*)arguments withCompleteCallback:(FFprobeSessionCompleteCallback)completeCallback withLogCallback:(LogCallback)logCallback withLogRedirectionStrategy:(LogRedirectionStrategy)logRedirectionStrategy {
+
+    self = [super init:arguments withLogCallback:logCallback withLogRedirectionStrategy:logRedirectionStrategy];
+
+    if (self) {
+        _completeCallback = completeCallback;
+    }
 
     return self;
 }
 
-- (instancetype)init:(NSArray*)arguments withExecuteCallback:(ExecuteCallback)executeCallback withLogCallback:(LogCallback)logCallback {
-
-    self = [super init:arguments withExecuteCallback:executeCallback withLogCallback:logCallback withLogRedirectionStrategy:[FFmpegKitConfig getLogRedirectionStrategy]];
-
-    return self;
-}
-
-- (instancetype)init:(NSArray*)arguments withExecuteCallback:(ExecuteCallback)executeCallback withLogCallback:(LogCallback)logCallback withLogRedirectionStrategy:(LogRedirectionStrategy)logRedirectionStrategy {
-
-    self = [super init:arguments withExecuteCallback:executeCallback withLogCallback:logCallback withLogRedirectionStrategy:logRedirectionStrategy];
-
-    return self;
+- (FFprobeSessionCompleteCallback)getCompleteCallback {
+    return _completeCallback;
 }
 
 - (BOOL)isFFmpeg {
@@ -62,6 +66,10 @@
 
 - (BOOL)isFFprobe {
     return true;
+}
+
+- (BOOL)isMediaInformation {
+    return false;
 }
 
 @end

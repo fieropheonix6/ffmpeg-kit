@@ -24,16 +24,17 @@
 #include "config.h"
 #include "libavcodec/jni.h"
 #include "libavutil/bprint.h"
+#include "libavutil/mem.h"
 #include "ffmpegkit.h"
 
 /** Forward declaration for function defined in fftools_ffprobe.c */
 int ffprobe_execute(int argc, char **argv);
 
 extern int configuredLogLevel;
-extern __thread volatile long sessionId;
-extern void addSession(long id);
-extern void removeSession(long id);
-extern void resetMessagesInTransmit(long id);
+extern __thread long globalSessionId;
+extern void addSession(long sessionId);
+extern void removeSession(long sessionId);
+extern void resetMessagesInTransmit(long sessionId);
 
 /**
  * Synchronously executes FFprobe natively with arguments provided.
@@ -78,10 +79,10 @@ JNIEXPORT jint JNICALL Java_com_arthenica_ffmpegkit_FFmpegKitConfig_nativeFFprob
     }
 
     // REGISTER THE ID BEFORE STARTING THE SESSION
-    sessionId = (long) id;
+    globalSessionId = (long) id;
     addSession((long) id);
 
-    resetMessagesInTransmit(sessionId);
+    resetMessagesInTransmit(globalSessionId);
 
     // RUN
     int returnCode = ffprobe_execute(argumentCount, argv);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Taner Sener
+ * Copyright (c) 2021-2022 Taner Sener
  *
  * This file is part of FFmpegKit.
  *
@@ -22,6 +22,7 @@
 
 #import <Foundation/Foundation.h>
 #import "AbstractSession.h"
+#import "FFprobeSessionCompleteCallback.h"
 
 /**
  * <p>An FFprobe session.
@@ -32,35 +33,46 @@
  * Builds a new FFprobe session.
  *
  * @param arguments command arguments
+ * @return created session
  */
-- (instancetype)init:(NSArray*)arguments;
++ (instancetype)create:(NSArray*)arguments;
 
 /**
  * Builds a new FFprobe session.
  *
- * @param arguments       command arguments
- * @param executeCallback session specific execute callback
+ * @param arguments        command arguments
+ * @param completeCallback session specific complete callback
+ * @return created session
  */
-- (instancetype)init:(NSArray*)arguments withExecuteCallback:(ExecuteCallback)executeCallback;
++ (instancetype)create:(NSArray*)arguments withCompleteCallback:(FFprobeSessionCompleteCallback)completeCallback;
 
 /**
  * Builds a new FFprobe session.
  *
- * @param arguments       command arguments
- * @param executeCallback session specific execute callback
- * @param logCallback     session specific log callback
+ * @param arguments        command arguments
+ * @param completeCallback session specific complete callback
+ * @param logCallback      session specific log callback
+ * @return created session
  */
-- (instancetype)init:(NSArray*)arguments withExecuteCallback:(ExecuteCallback)executeCallback withLogCallback:(LogCallback)logCallback;
++ (instancetype)create:(NSArray*)arguments withCompleteCallback:(FFprobeSessionCompleteCallback)completeCallback withLogCallback:(LogCallback)logCallback;
 
 /**
  * Builds a new FFprobe session.
  *
- * @param arguments              command arguments
- * @param executeCallback        session specific execute callback
- * @param logCallback            session specific log callback
- * @param logRedirectionStrategy session specific log redirection strategy
+ * @param arguments               command arguments
+ * @param completeCallback        session specific complete callback
+ * @param logCallback             session specific log callback
+ * @param logRedirectionStrategy  session specific log redirection strategy
+ * @return created session
  */
-- (instancetype)init:(NSArray*)arguments withExecuteCallback:(ExecuteCallback)executeCallback withLogCallback:(LogCallback)logCallback withLogRedirectionStrategy:(LogRedirectionStrategy)logRedirectionStrategy;
++ (instancetype)create:(NSArray*)arguments withCompleteCallback:(FFprobeSessionCompleteCallback)completeCallback withLogCallback:(LogCallback)logCallback withLogRedirectionStrategy:(LogRedirectionStrategy)logRedirectionStrategy;
+
+/**
+ * Returns the session specific complete callback.
+ *
+ * @return session specific complete callback
+ */
+- (FFprobeSessionCompleteCallback)getCompleteCallback;
 
 @end
 

@@ -28,9 +28,14 @@ import java.util.List;
 public class FFmpegSession extends AbstractSession implements Session {
 
     /**
-     * Session specific statistics callback function.
+     * Session specific statistics callback.
      */
     private final StatisticsCallback statisticsCallback;
+
+    /**
+     * Session specific complete callback.
+     */
+    private final FFmpegSessionCompleteCallback completeCallback;
 
     /**
      * Statistics entries received for this session.
@@ -46,52 +51,74 @@ public class FFmpegSession extends AbstractSession implements Session {
      * Builds a new FFmpeg session.
      *
      * @param arguments command arguments
+     * @return created session
      */
-    public FFmpegSession(final String[] arguments) {
-        this(arguments, null);
+    public static FFmpegSession create(final String[] arguments) {
+        return new FFmpegSession(arguments, null, null, null, FFmpegKitConfig.getLogRedirectionStrategy());
     }
 
     /**
      * Builds a new FFmpeg session.
      *
-     * @param arguments       command arguments
-     * @param executeCallback session specific execute callback function
+     * @param arguments        command arguments
+     * @param completeCallback session specific complete callback
+     * @return created session
      */
-    public FFmpegSession(final String[] arguments, final ExecuteCallback executeCallback) {
-        this(arguments, executeCallback, null, null);
+    public static FFmpegSession create(final String[] arguments, final FFmpegSessionCompleteCallback completeCallback) {
+        return new FFmpegSession(arguments, completeCallback, null, null, FFmpegKitConfig.getLogRedirectionStrategy());
     }
 
     /**
      * Builds a new FFmpeg session.
      *
      * @param arguments          command arguments
-     * @param executeCallback    session specific execute callback function
-     * @param logCallback        session specific log callback function
-     * @param statisticsCallback session specific statistics callback function
+     * @param completeCallback   session specific complete callback
+     * @param logCallback        session specific log callback
+     * @param statisticsCallback session specific statistics callback
+     * @return created session
      */
-    public FFmpegSession(final String[] arguments,
-                         final ExecuteCallback executeCallback,
-                         final LogCallback logCallback,
-                         final StatisticsCallback statisticsCallback) {
-        this(arguments, executeCallback, logCallback, statisticsCallback, FFmpegKitConfig.getLogRedirectionStrategy());
+    public static FFmpegSession create(final String[] arguments,
+                                       final FFmpegSessionCompleteCallback completeCallback,
+                                       final LogCallback logCallback,
+                                       final StatisticsCallback statisticsCallback) {
+        return new FFmpegSession(arguments, completeCallback, logCallback, statisticsCallback, FFmpegKitConfig.getLogRedirectionStrategy());
     }
 
     /**
      * Builds a new FFmpeg session.
      *
      * @param arguments              command arguments
-     * @param executeCallback        session specific execute callback function
-     * @param logCallback            session specific log callback function
-     * @param statisticsCallback     session specific statistics callback function
+     * @param completeCallback       session specific complete callback
+     * @param logCallback            session specific log callback
+     * @param statisticsCallback     session specific statistics callback
+     * @param logRedirectionStrategy session specific log redirection strategy
+     * @return created session
+     */
+    public static FFmpegSession create(final String[] arguments,
+                                       final FFmpegSessionCompleteCallback completeCallback,
+                                       final LogCallback logCallback,
+                                       final StatisticsCallback statisticsCallback,
+                                       final LogRedirectionStrategy logRedirectionStrategy) {
+        return new FFmpegSession(arguments, completeCallback, logCallback, statisticsCallback, logRedirectionStrategy);
+    }
+
+    /**
+     * Builds a new FFmpeg session.
+     *
+     * @param arguments              command arguments
+     * @param completeCallback       session specific complete callback
+     * @param logCallback            session specific log callback
+     * @param statisticsCallback     session specific statistics callback
      * @param logRedirectionStrategy session specific log redirection strategy
      */
-    public FFmpegSession(final String[] arguments,
-                         final ExecuteCallback executeCallback,
-                         final LogCallback logCallback,
-                         final StatisticsCallback statisticsCallback,
-                         final LogRedirectionStrategy logRedirectionStrategy) {
-        super(arguments, executeCallback, logCallback, logRedirectionStrategy);
+    private FFmpegSession(final String[] arguments,
+                          final FFmpegSessionCompleteCallback completeCallback,
+                          final LogCallback logCallback,
+                          final StatisticsCallback statisticsCallback,
+                          final LogRedirectionStrategy logRedirectionStrategy) {
+        super(arguments, logCallback, logRedirectionStrategy);
 
+        this.completeCallback = completeCallback;
         this.statisticsCallback = statisticsCallback;
 
         this.statistics = new LinkedList<>();
@@ -99,12 +126,21 @@ public class FFmpegSession extends AbstractSession implements Session {
     }
 
     /**
-     * Returns the session specific statistics callback function.
+     * Returns the session specific statistics callback.
      *
-     * @return session specific statistics callback function
+     * @return session specific statistics callback
      */
     public StatisticsCallback getStatisticsCallback() {
         return statisticsCallback;
+    }
+
+    /**
+     * Returns the session specific complete callback.
+     *
+     * @return session specific complete callback
+     */
+    public FFmpegSessionCompleteCallback getCompleteCallback() {
+        return completeCallback;
     }
 
     /**
@@ -157,7 +193,7 @@ public class FFmpegSession extends AbstractSession implements Session {
     public Statistics getLastReceivedStatistics() {
         synchronized (statisticsLock) {
             if (statistics.size() > 0) {
-                return statistics.get(0);
+                return statistics.get(statistics.size() - 1);
             } else {
                 return null;
             }
@@ -165,7 +201,8 @@ public class FFmpegSession extends AbstractSession implements Session {
     }
 
     /**
-     * Adds a new statistics entry for this session.
+     * Adds a new statistics entry for this session. It is invoked internally by
+     * <code>FFmpegKit</code> library methods. Must not be used by user applications.
      *
      * @param statistics statistics entry
      */
@@ -186,6 +223,11 @@ public class FFmpegSession extends AbstractSession implements Session {
     }
 
     @Override
+    public boolean isMediaInformation() {
+        return false;
+    }
+
+    @Override
     public String toString() {
         final StringBuilder stringBuilder = new StringBuilder();
 
@@ -199,7 +241,7 @@ public class FFmpegSession extends AbstractSession implements Session {
         stringBuilder.append(", endTime=");
         stringBuilder.append(endTime);
         stringBuilder.append(", arguments=");
-        stringBuilder.append(FFmpegKit.argumentsToString(arguments));
+        stringBuilder.append(FFmpegKitConfig.argumentsToString(arguments));
         stringBuilder.append(", logs=");
         stringBuilder.append(getLogsAsString());
         stringBuilder.append(", state=");

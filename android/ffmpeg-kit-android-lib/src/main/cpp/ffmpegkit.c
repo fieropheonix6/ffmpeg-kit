@@ -25,6 +25,7 @@
 #include "config.h"
 #include "libavcodec/jni.h"
 #include "libavutil/bprint.h"
+#include "libavutil/file.h"
 #include "fftools_ffmpeg.h"
 #include "ffmpegkit.h"
 #include "ffprobekit.h"
@@ -44,7 +45,7 @@ struct CallbackData {
   float statisticsFps;              // statistics fps
   float statisticsQuality;          // statistics quality
   int64_t statisticsSize;           // statistics size
-  int statisticsTime;               // statistics time
+  double statisticsTime;            // statistics time
   double statisticsBitrate;         // statistics bitrate
   double statisticsSpeed;           // statistics speed
 
@@ -52,7 +53,7 @@ struct CallbackData {
 };
 
 /** Session control variables */
-const int SESSION_MAP_SIZE = 1000;
+#define SESSION_MAP_SIZE 1000
 static atomic_short sessionMap[SESSION_MAP_SIZE];
 static atomic_int sessionInTransitMessageCountMap[SESSION_MAP_SIZE];
 
@@ -79,8 +80,11 @@ static jmethodID logMethod;
 /** Global reference of statistics redirection method in Java */
 static jmethodID statisticsMethod;
 
-/** Global reference of closeParcelFileDescriptor method in Java */
-static jmethodID closeParcelFileDescriptorMethod;
+/** Global reference of safOpen method in Java */
+static jmethodID safOpenMethod;
+
+/** Global reference of safClose method in Java */
+static jmethodID safCloseMethod;
 
 /** Global reference of String class in Java */
 static jclass stringClass;
@@ -102,7 +106,7 @@ volatile int handleSIGXCPU = 1;
 volatile int handleSIGPIPE = 1;
 
 /** Holds the id of the current session */
-__thread volatile long sessionId = 0;
+__thread long globalSessionId = 0;
 
 /** Holds the default log level */
 int configuredLogLevel = AV_LOG_INFO;
@@ -274,7 +278,7 @@ void logCallbackDataAdd(int level, AVBPrint *data) {
     // CREATE DATA STRUCT FIRST
     struct CallbackData *newData = (struct CallbackData*)av_malloc(sizeof(struct CallbackData));
     newData->type = LogType;
-    newData->sessionId = sessionId;
+    newData->sessionId = globalSessionId;
     newData->logLevel = level;
     av_bprint_init(&newData->logData, 0, AV_BPRINT_SIZE_UNLIMITED);
     av_bprintf(&newData->logData, "%s", data->str);
@@ -302,18 +306,18 @@ void logCallbackDataAdd(int level, AVBPrint *data) {
 
     monitorNotify();
 
-    atomic_fetch_add(&sessionInTransitMessageCountMap[sessionId % SESSION_MAP_SIZE], 1);
+    atomic_fetch_add(&sessionInTransitMessageCountMap[globalSessionId % SESSION_MAP_SIZE], 1);
 }
 
 /**
  * Adds statistics data to the end of callback data list.
  */
-void statisticsCallbackDataAdd(int frameNumber, float fps, float quality, int64_t size, int time, double bitrate, double speed) {
+void statisticsCallbackDataAdd(int frameNumber, float fps, float quality, int64_t size, double time, double bitrate, double speed) {
 
     // CREATE DATA STRUCT FIRST
     struct CallbackData *newData = (struct CallbackData*)av_malloc(sizeof(struct CallbackData));
     newData->type = StatisticsType;
-    newData->sessionId = sessionId;
+    newData->sessionId = globalSessionId;
     newData->statisticsFrameNumber = frameNumber;
     newData->statisticsFps = fps;
     newData->statisticsQuality = quality;
@@ -346,7 +350,7 @@ void statisticsCallbackDataAdd(int frameNumber, float fps, float quality, int64_
 
     monitorNotify();
 
-    atomic_fetch_add(&sessionInTransitMessageCountMap[sessionId % SESSION_MAP_SIZE], 1);
+    atomic_fetch_add(&sessionInTransitMessageCountMap[globalSessionId % SESSION_MAP_SIZE], 1);
 }
 
 /**
@@ -487,7 +491,7 @@ void ffmpegkit_log_callback_function(void *ptr, int level, const char* format, v
  * @param bitrate output bit rate in kbits/s
  * @param speed processing speed = processed duration / operation duration
  */
-void ffmpegkit_statistics_callback_function(int frameNumber, float fps, float quality, int64_t size, int time, double bitrate, double speed) {
+void ffmpegkit_statistics_callback_function(int frameNumber, float fps, float quality, int64_t size, double time, double bitrate, double speed) {
     statisticsCallbackDataAdd(frameNumber, fps, quality, size, time, bitrate, speed);
 }
 
@@ -560,12 +564,45 @@ void *callbackThreadFunction() {
 }
 
 /**
- * Used by saf_wrapper; is expected to be called from a Java thread, therefore we don't need attach/detach
+ * Used by saf protocol; is expected to be called from a Java thread, therefore we don't need attach/detach
  */
-void closeParcelFileDescriptor(int fd) {
+int saf_open(int safId) {
     JNIEnv *env = NULL;
     (*globalVm)->GetEnv(globalVm, (void**) &env, JNI_VERSION_1_6);
-    (*env)->CallStaticVoidMethod(env, configClass, closeParcelFileDescriptorMethod, fd);
+    return (*env)->CallStaticIntMethod(env, configClass, safOpenMethod, safId);
+}
+
+/**
+ * Used by saf protocol; is expected to be called from a Java thread, therefore we don't need attach/detach
+ */
+int saf_close(int fd) {
+    JNIEnv *env = NULL;
+    (*globalVm)->GetEnv(globalVm, (void**) &env, JNI_VERSION_1_6);
+    return (*env)->CallStaticIntMethod(env, configClass, safCloseMethod, fd);
+}
+
+/**
+ * Used by JNI methods to enable redirection.
+ */
+static void enableNativeRedirection() {
+    mutexLock();
+
+    if (redirectionEnabled != 0) {
+        mutexUnlock();
+        return;
+    }
+    redirectionEnabled = 1;
+
+    mutexUnlock();
+
+    int rc = pthread_create(&callbackThread, 0, callbackThreadFunction, 0);
+    if (rc != 0) {
+        LOGE("Failed to create callback thread (rc=%d).\n", rc);
+        return;
+    }
+
+    av_log_set_callback(ffmpegkit_log_callback_function);
+    set_report_callback(ffmpegkit_statistics_callback_function);
 }
 
 /**
@@ -607,15 +644,21 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved) {
         return JNI_FALSE;
     }
 
-    statisticsMethod = (*env)->GetStaticMethodID(env, localConfigClass, "statistics", "(JIFFJIDD)V");
-    if (logMethod == NULL) {
+    statisticsMethod = (*env)->GetStaticMethodID(env, localConfigClass, "statistics", "(JIFFJDDD)V");
+    if (statisticsMethod == NULL) {
         LOGE("OnLoad thread failed to GetStaticMethodID for %s.\n", "statistics");
         return JNI_FALSE;
     }
 
-    closeParcelFileDescriptorMethod = (*env)->GetStaticMethodID(env, localConfigClass, "closeParcelFileDescriptor", "(I)V");
-    if (logMethod == NULL) {
-        LOGE("OnLoad thread failed to GetStaticMethodID for %s.\n", "closeParcelFileDescriptor");
+    safOpenMethod = (*env)->GetStaticMethodID(env, localConfigClass, "safOpen", "(I)I");
+    if (safOpenMethod == NULL) {
+        LOGE("OnLoad thread failed to GetStaticMethodID for %s.\n", "safOpen");
+        return JNI_FALSE;
+    }
+
+    safCloseMethod = (*env)->GetStaticMethodID(env, localConfigClass, "safClose", "(I)I");
+    if (safCloseMethod == NULL) {
+        LOGE("OnLoad thread failed to GetStaticMethodID for %s.\n", "safClose");
         return JNI_FALSE;
     }
 
@@ -642,6 +685,11 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved) {
     monitorInit();
 
     redirectionEnabled = 0;
+
+    av_set_saf_open(saf_open);
+    av_set_saf_close(saf_close);
+
+    enableNativeRedirection();
 
     return JNI_VERSION_1_6;
 }
@@ -674,24 +722,7 @@ JNIEXPORT jint JNICALL Java_com_arthenica_ffmpegkit_FFmpegKitConfig_getNativeLog
  * @param object reference to the class on which this method is invoked
  */
 JNIEXPORT void JNICALL Java_com_arthenica_ffmpegkit_FFmpegKitConfig_enableNativeRedirection(JNIEnv *env, jclass object) {
-    mutexLock();
-
-    if (redirectionEnabled != 0) {
-        mutexUnlock();
-        return;
-    }
-    redirectionEnabled = 1;
-
-    mutexUnlock();
-
-    int rc = pthread_create(&callbackThread, 0, callbackThreadFunction, 0);
-    if (rc != 0) {
-        LOGE("Failed to create callback thread (rc=%d).\n", rc);
-        return;
-    }
-
-    av_log_set_callback(ffmpegkit_log_callback_function);
-    set_report_callback(ffmpegkit_statistics_callback_function);
+    enableNativeRedirection();
 }
 
 /**
@@ -783,10 +814,10 @@ JNIEXPORT jint JNICALL Java_com_arthenica_ffmpegkit_FFmpegKitConfig_nativeFFmpeg
     }
 
     // REGISTER THE ID BEFORE STARTING THE SESSION
-    sessionId = (long) id;
+    globalSessionId = (long) id;
     addSession((long) id);
 
-    resetMessagesInTransmit(sessionId);
+    resetMessagesInTransmit(globalSessionId);
 
     // RUN
     int returnCode = ffmpeg_execute(argumentCount, argv);

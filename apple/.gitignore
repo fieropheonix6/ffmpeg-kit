@@ -2,9 +2,16 @@
 /Makefile
 /config.status
 /configure.tmp
+/configure~
 /.deps/
 /.libs/
 *.trs
 /unittests
 /test-driver
 /config.log
+/*.tmp
+/m4/
+/configure
+/libtool
+/ltmain.sh
+/Makefile.in

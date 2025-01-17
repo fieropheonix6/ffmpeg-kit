@@ -1,40 +1,44 @@
 #!/bin/bash
 
 # UPDATE BUILD FLAGS
-export LEPTONICA_CFLAGS="-I${LIB_INSTALL_BASE}/leptonica/include/leptonica"
-export LEPTONICA_LIBS="-L${LIB_INSTALL_BASE}/leptonica/lib -llept"
+PKG_CONFIG_PATH=${INSTALL_PKG_CONFIG_DIR}
+export LEPTONICA_CFLAGS=" $(pkg-config --cflags lept 2>>"${BASEDIR}"/build.log)"
+export LEPTONICA_LIBS=" $(pkg-config --libs lept 2>>"${BASEDIR}"/build.log)"
 
 # ALWAYS CLEAN THE PREVIOUS BUILD
 make distclean 2>/dev/null 1>/dev/null
 
 # REGENERATE BUILD FILES IF NECESSARY OR REQUESTED
 if [[ ! -f "${BASEDIR}"/src/"${LIB_NAME}"/configure ]] || [[ ${RECONF_tesseract} -eq 1 ]]; then
-  autoreconf_library "${LIB_NAME}"
+  ./autogen.sh 1>>"${BASEDIR}"/build.log 2>&1 || return 1
 fi
 
 ./configure \
   --prefix="${LIB_INSTALL_PREFIX}" \
   --with-pic \
-  --with-sysroot="${SDK_PATH}" \
+  --without-tensorflow \
+  --without-curl \
+  --without-archive \
   --enable-static \
   --disable-shared \
   --disable-fast-install \
   --disable-debug \
   --disable-graphics \
-  --disable-cube \
+  --disable-openmp \
   --disable-tessdata-prefix \
-  --disable-largefile \
   --host="${HOST}" || return 1
 
-# WORKAROUND TO REMOVE -bind_at_load FLAG WHICH CAN NOT BE USED WHEN BITCODE IS ENABLED
-${SED_INLINE} 's/$wl-bind_at_load//g' ${BASEDIR}/src/${LIB_NAME}/libtool
+# WORKAROUNDS
+git checkout ${BASEDIR}/src/${LIB_NAME}/libtool 1>>"${BASEDIR}"/build.log 2>&1
+if [[ ${FFMPEG_KIT_BUILD_TYPE} != "macos" ]]; then
 
-# WORKAROUND TO DISABLE LINKING TO rt
-${SED_INLINE} 's/-lrt//g' ${BASEDIR}/src/${LIB_NAME}/api/Makefile
+  # WORKAROUND TO REMOVE -bind_at_load FLAG WHICH CAN NOT BE USED WHEN BITCODE IS ENABLED
+  ${SED_INLINE} 's/$wl-bind_at_load//g' ${BASEDIR}/src/${LIB_NAME}/libtool
+fi
 
 make -j$(get_cpu_count) || return 1
 
 make install || return 1
 
 # CREATE PACKAGE CONFIG MANUALLY
-create_tesseract_package_config "3.05.02" || return 1
+create_tesseract_package_config "5.3.2" || return 1

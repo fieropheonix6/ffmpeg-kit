@@ -2,6 +2,8 @@
 
 source "${BASEDIR}/scripts/function-apple.sh"
 
+prepare_inline_sed
+
 enable_default_tvos_architectures() {
   ENABLED_ARCHITECTURES[ARCH_ARM64]=1
   ENABLED_ARCHITECTURES[ARCH_X86_64]=1
@@ -18,7 +20,7 @@ set explicitly. When compilation ends, libraries are created under the prebuilt 
   echo -e "Usage: ./$COMMAND [OPTION]...\n"
   echo -e "Specify environment variables as VARIABLE=VALUE to override default build options.\n"
 
-  display_help_options "  -x, --xcframework\t\tbuild xcframework bundles instead of framework bundles and universal libraries" "  -l, --lts			build lts packages to support sdk 9.2+ devices"
+  display_help_options "  -x, --xcframework\t\tbuild xcframework bundles instead of framework bundles" "  -l, --lts			build lts packages to support sdk 10.0+ devices" "      --target=tvos sdk version\toverride minimum deployment target [11.0]"
   display_help_licensing
 
   echo -e "Architectures:"
@@ -39,25 +41,32 @@ set explicitly. When compilation ends, libraries are created under the prebuilt 
 
   display_help_common_libraries
   display_help_gpl_libraries
+  display_help_custom_libraries
   if [[ -n ${FFMPEG_KIT_XCF_BUILD} ]]; then
-    display_help_advanced_options "  --no-framework\t\tdo not build xcframework bundles [no]"
+    display_help_advanced_options "  --no-framework\t\tdo not build xcframework bundles [no]"  "  --no-bitcode\t\t\tdo not enable bitcode in bundles [no]"
   else
-    display_help_advanced_options "  --no-framework\t\tdo not build framework bundles and universal libraries [no]"
+    display_help_advanced_options "  --no-framework\t\tdo not build framework bundles [no]"  "  --no-bitcode\t\t\tdo not enable bitcode in bundles [no]"
   fi
 }
 
 enable_main_build() {
-  export TVOS_MIN_VERSION=10.2
+  if [[ $(compare_versions "$DETECTED_TVOS_SDK_VERSION" "11.0") -le 0 ]]; then
+    export TVOS_MIN_VERSION=$DETECTED_TVOS_SDK_VERSION
+  else
+    export TVOS_MIN_VERSION=11.0
+  fi
 }
 
 enable_lts_build() {
   export FFMPEG_KIT_LTS_BUILD="1"
 
-  # XCODE 7.3 HAS TVOS SDK 9.2
-  export TVOS_MIN_VERSION=9.2
+  if [[ $(compare_versions "$DETECTED_TVOS_SDK_VERSION" "10.0") -le 0 ]]; then
+    export TVOS_MIN_VERSION=$DETECTED_TVOS_SDK_VERSION
+  else
 
-  # TVOS SDK 9.2 DOES NOT INCLUDE VIDEOTOOLBOX
-  ENABLED_LIBRARIES[LIBRARY_VIDEOTOOLBOX]=0
+    # XCODE 8.0 HAS TVOS SDK 10.0
+    export TVOS_MIN_VERSION=10.0
+  fi
 }
 
 get_common_includes() {
@@ -70,13 +79,16 @@ get_common_cflags() {
   fi
 
   local BUILD_DATE="-DFFMPEG_KIT_BUILD_DATE=$(date +%Y%m%d 2>>"${BASEDIR}"/build.log)"
+  if [ -z $NO_BITCODE ]; then
+    local BITCODE_FLAGS="-fembed-bitcode"
+  fi
 
   case ${ARCH} in
   arm64)
-    echo "-fstrict-aliasing -fembed-bitcode -DTVOS ${LTS_BUILD_FLAG}${BUILD_DATE} -isysroot ${SDK_PATH}"
+    echo "-fstrict-aliasing ${BITCODE_FLAGS} -DTVOS ${LTS_BUILD_FLAG}${BUILD_DATE} -Wno-incompatible-function-pointer-types -isysroot ${SDK_PATH}"
     ;;
   x86-64 | arm64-simulator)
-    echo "-fstrict-aliasing -DTVOS ${LTS_BUILD_FLAG}${BUILD_DATE} -isysroot ${SDK_PATH}"
+    echo "-fstrict-aliasing -DTVOS ${LTS_BUILD_FLAG}${BUILD_DATE} -Wno-incompatible-function-pointer-types -isysroot ${SDK_PATH}"
     ;;
   esac
 }
@@ -90,7 +102,7 @@ get_arch_specific_cflags() {
     echo "-arch arm64 -target $(get_target) -march=armv8-a+crc+crypto -mcpu=generic -DFFMPEG_KIT_ARM64_SIMULATOR"
     ;;
   x86-64)
-    echo "-arch x86_64 -target $(get_target) -march=x86-64 -msse4.2 -mpopcnt -m64 -mtune=intel -DFFMPEG_KIT_X86_64"
+    echo "-arch x86_64 -target $(get_target) -march=x86-64 -msse4.2 -mpopcnt -m64 -DFFMPEG_KIT_X86_64"
     ;;
   esac
 }
@@ -169,6 +181,12 @@ get_app_specific_cflags() {
   ffmpeg)
     APP_FLAGS="-Wno-unused-function -Wno-deprecated-declarations"
     ;;
+  ffmpeg-kit)
+    APP_FLAGS="-std=c99 -Wno-unused-function -Wall -Wno-deprecated-declarations -Wno-pointer-sign -Wno-switch -Wno-unused-result -Wno-unused-variable -DPIC -fobjc-arc"
+    ;;
+  gnutls)
+    APP_FLAGS="-std=c99 -Wno-unused-function -D_GL_USE_STDLIB_ALLOC=1"
+    ;;
   jpeg)
     APP_FLAGS="-Wno-nullability-completeness"
     ;;
@@ -181,8 +199,8 @@ get_app_specific_cflags() {
   libwebp | xvidcore)
     APP_FLAGS="-fno-common -DPIC"
     ;;
-  ffmpeg-kit)
-    APP_FLAGS="-std=c99 -Wno-unused-function -Wall -Wno-deprecated-declarations -Wno-pointer-sign -Wno-switch -Wno-unused-result -Wno-unused-variable -DPIC -fobjc-arc"
+  openh264 | x265)
+    APP_FLAGS="-Wno-unused-function"
     ;;
   sdl)
     APP_FLAGS="-DPIC -Wno-unused-function -D__TVOS__"
@@ -192,9 +210,6 @@ get_app_specific_cflags() {
     ;;
   soxr | snappy)
     APP_FLAGS="-std=gnu99 -Wno-unused-function -DPIC"
-    ;;
-  openh264 | x265)
-    APP_FLAGS="-Wno-unused-function"
     ;;
   *)
     APP_FLAGS="-std=c99 -Wno-unused-function"
@@ -245,28 +260,36 @@ get_cxxflags() {
   local BITCODE_FLAGS=""
   case ${ARCH} in
   arm64)
-    local BITCODE_FLAGS="-fembed-bitcode"
+    if [ -z $NO_BITCODE ]; then
+      local BITCODE_FLAGS="-fembed-bitcode"
+    fi
     ;;
   esac
 
   case $1 in
-  x265)
-    echo "-std=c++11 -fno-exceptions ${BITCODE_FLAGS} ${COMMON_CFLAGS}"
-    ;;
   gnutls)
     echo "-std=c++11 -fno-rtti ${BITCODE_FLAGS} ${COMMON_CFLAGS} ${OPTIMIZATION_FLAGS}"
     ;;
-  libwebp | xvidcore)
-    echo "-std=c++11 -fno-exceptions -fno-rtti ${BITCODE_FLAGS} -fno-common -DPIC ${COMMON_CFLAGS} ${OPTIMIZATION_FLAGS}"
-    ;;
   libaom)
     echo "-std=c++11 -fno-exceptions ${BITCODE_FLAGS} ${COMMON_CFLAGS} ${OPTIMIZATION_FLAGS}"
+    ;;
+  libilbc)
+    echo "-std=c++14 -fno-exceptions ${BITCODE_FLAGS} ${COMMON_CFLAGS} ${OPTIMIZATION_FLAGS}"
+    ;;
+  libwebp | xvidcore)
+    echo "-std=c++11 -fno-exceptions -fno-rtti ${BITCODE_FLAGS} -fno-common -DPIC ${COMMON_CFLAGS} ${OPTIMIZATION_FLAGS}"
     ;;
   opencore-amr)
     echo "-fno-rtti ${BITCODE_FLAGS} ${COMMON_CFLAGS} ${OPTIMIZATION_FLAGS}"
     ;;
   rubberband)
-    echo "-fno-rtti ${BITCODE_FLAGS} ${COMMON_CFLAGS} ${OPTIMIZATION_FLAGS}"
+    echo "-fno-rtti -Wno-c++11-narrowing ${BITCODE_FLAGS} ${COMMON_CFLAGS} ${OPTIMIZATION_FLAGS}"
+    ;;
+  srt | tesseract | zimg)
+    echo "-std=c++11 ${BITCODE_FLAGS} ${COMMON_CFLAGS} ${OPTIMIZATION_FLAGS}"
+    ;;
+  x265)
+    echo "-std=c++11 -fno-exceptions ${BITCODE_FLAGS} ${COMMON_CFLAGS}"
     ;;
   *)
     echo "-std=c++11 -fno-exceptions -fno-rtti ${BITCODE_FLAGS} ${COMMON_CFLAGS} ${OPTIMIZATION_FLAGS}"
@@ -279,7 +302,7 @@ get_common_linked_libraries() {
 }
 
 get_common_ldflags() {
-  echo "-isysroot ${SDK_PATH}"
+  echo "-isysroot ${SDK_PATH} $(get_min_version_cflags)"
 }
 
 get_size_optimization_ldflags() {
@@ -308,9 +331,13 @@ get_size_optimization_ldflags() {
 }
 
 get_arch_specific_ldflags() {
+  if [ -z $NO_BITCODE ]; then
+    local BITCODE_FLAGS="-fembed-bitcode"
+  fi
+
   case ${ARCH} in
   arm64)
-    echo "-arch arm64 -march=armv8-a+crc+crypto -fembed-bitcode"
+    echo "-arch arm64 -march=armv8-a+crc+crypto ${BITCODE_FLAGS}"
     ;;
   arm64-simulator)
     echo "-arch arm64 -march=armv8-a+crc+crypto"
@@ -330,12 +357,15 @@ get_ldflags() {
     local OPTIMIZATION_FLAGS="${FFMPEG_KIT_DEBUG}"
   fi
   local COMMON_FLAGS=$(get_common_ldflags)
+  if [ -z $NO_BITCODE ]; then
+    local BITCODE_FLAGS="-fembed-bitcode -Wc,-fembed-bitcode"
+  fi
 
   case $1 in
   ffmpeg-kit)
     case ${ARCH} in
     arm64)
-      echo "${ARCH_FLAGS} ${LINKED_LIBRARIES} ${COMMON_FLAGS} -fembed-bitcode -Wc,-fembed-bitcode ${OPTIMIZATION_FLAGS}"
+      echo "${ARCH_FLAGS} ${LINKED_LIBRARIES} ${COMMON_FLAGS} ${BITCODE_FLAGS} ${OPTIMIZATION_FLAGS}"
       ;;
     *)
       echo "${ARCH_FLAGS} ${LINKED_LIBRARIES} ${COMMON_FLAGS} ${OPTIMIZATION_FLAGS}"
@@ -343,6 +373,7 @@ get_ldflags() {
     esac
     ;;
   *)
+    # NOTE THAT ffmpeg ALSO NEEDS BITCODE, IT IS ENABLED IN ffmpeg.sh
     echo "${ARCH_FLAGS} ${LINKED_LIBRARIES} ${COMMON_FLAGS} ${OPTIMIZATION_FLAGS}"
     ;;
   esac
@@ -350,11 +381,11 @@ get_ldflags() {
 
 set_toolchain_paths() {
   if [ ! -f "${FFMPEG_KIT_TMPDIR}/gas-preprocessor.pl" ]; then
-    DOWNLOAD_RESULT=$(download "https://github.com/tanersener/gas-preprocessor/raw/master/gas-preprocessor.pl" "gas-preprocessor.pl" "exit")
+    DOWNLOAD_RESULT=$(download "https://github.com/arthenica/gas-preprocessor/raw/v20210917/gas-preprocessor.pl" "gas-preprocessor.pl" "exit")
     if [[ ${DOWNLOAD_RESULT} -ne 0 ]]; then
       exit 1
     fi
-    (chmod +x "${FFMPEG_KIT_TMPDIR}"/gas-preprocessor.pl 1>>"${BASEDIR}"/build.log 2>&1) || exit 1
+    (chmod +x "${FFMPEG_KIT_TMPDIR}"/gas-preprocessor.pl 1>>"${BASEDIR}"/build.log 2>&1) || return 1
 
     # patch gas-preprocessor.pl against the following warning
     # Unescaped left brace in regex is deprecated here (and will be fatal in Perl 5.32), passed through in regex; marked by <-- HERE in m/(?:ld|st)\d\s+({ <-- HERE \s*v(\d+)\.(\d[bhsdBHSD])\s*-\s*v(\d+)\.(\d[bhsdBHSD])\s*})/ at /Users/taner/Projects/ffmpeg-kit/.tmp/gas-preprocessor.pl line 1065.
@@ -376,7 +407,7 @@ set_toolchain_paths() {
   LOCAL_ASMFLAGS="$(get_asmflags "$1")"
   case ${ARCH} in
   arm64*)
-    if [ "$1" == "x265" ]; then
+    if [ "$1" == "x265" ] || [ "$1" == "libilbc" ]; then
       export AS="${LOCAL_GAS_PREPROCESSOR}"
       export AS_ARGUMENTS="-arch aarch64"
       export ASM_FLAGS="${LOCAL_ASMFLAGS}"
@@ -419,8 +450,6 @@ set_toolchain_paths() {
   if [ ! -f "${LIB_UUID_PACKAGE_CONFIG_PATH}" ]; then
     create_libuuid_system_package_config
   fi
-
-  prepare_inline_sed
 }
 
 initialize_prebuilt_tvos_folders() {
@@ -429,11 +458,11 @@ initialize_prebuilt_tvos_folders() {
     echo -e "DEBUG: Initializing universal directories and frameworks for xcf builds\n" 1>>"${BASEDIR}"/build.log 2>&1
 
     if [[ $(is_apple_architecture_variant_supported "${ARCH_VAR_APPLETVOS}") -eq 1 ]]; then
-      initialize_folder "${BASEDIR}/prebuilt/$(get_universal_library_directory "${ARCH_VAR_APPLETVOS}")"
+      initialize_folder "${BASEDIR}/.tmp/$(get_universal_library_directory "${ARCH_VAR_APPLETVOS}")"
       initialize_folder "${BASEDIR}/prebuilt/$(get_framework_directory "${ARCH_VAR_APPLETVOS}")"
     fi
     if [[ $(is_apple_architecture_variant_supported "${ARCH_VAR_APPLETVSIMULATOR}") -eq 1 ]]; then
-      initialize_folder "${BASEDIR}/prebuilt/$(get_universal_library_directory "${ARCH_VAR_APPLETVSIMULATOR}")"
+      initialize_folder "${BASEDIR}/.tmp/$(get_universal_library_directory "${ARCH_VAR_APPLETVSIMULATOR}")"
       initialize_folder "${BASEDIR}/prebuilt/$(get_framework_directory "${ARCH_VAR_APPLETVSIMULATOR}")"
     fi
 
@@ -443,10 +472,10 @@ initialize_prebuilt_tvos_folders() {
     initialize_folder "${BASEDIR}/prebuilt/$(get_xcframework_directory)"
   else
 
-    echo -e "DEBUG: Initializing default universal directory at ${BASEDIR}/prebuilt/$(get_universal_library_directory "${ARCH_VAR_TVOS}")\n" 1>>"${BASEDIR}"/build.log 2>&1
+    echo -e "DEBUG: Initializing default universal directory at ${BASEDIR}/.tmp/$(get_universal_library_directory "${ARCH_VAR_TVOS}")\n" 1>>"${BASEDIR}"/build.log 2>&1
 
     # DEFAULT BUILDS GENERATE UNIVERSAL LIBRARIES AND FRAMEWORKS
-    initialize_folder "${BASEDIR}/prebuilt/$(get_universal_library_directory "${ARCH_VAR_TVOS}")"
+    initialize_folder "${BASEDIR}/.tmp/$(get_universal_library_directory "${ARCH_VAR_TVOS}")"
 
     echo -e "DEBUG: Initializing framework directory at ${BASEDIR}/prebuilt/$(get_framework_directory "${ARCH_VAR_TVOS}")\n" 1>>"${BASEDIR}"/build.log 2>&1
 
@@ -458,15 +487,9 @@ initialize_prebuilt_tvos_folders() {
 # DEPENDS TARGET_ARCH_LIST VARIABLE
 #
 create_universal_libraries_for_tvos_default_frameworks() {
-  local ROOT_UNIVERSAL_DIRECTORY_PATH="${BASEDIR}/prebuilt/$(get_universal_library_directory "${ARCH_VAR_TVOS}")"
+  local ROOT_UNIVERSAL_DIRECTORY_PATH="${BASEDIR}/.tmp/$(get_universal_library_directory "${ARCH_VAR_TVOS}")"
 
   echo -e "INFO: Building universal libraries in ${ROOT_UNIVERSAL_DIRECTORY_PATH} for default frameworks using ${TARGET_ARCH_LIST[@]}\n" 1>>"${BASEDIR}"/build.log 2>&1
-
-  for library in {0..46}; do
-    if [[ ${ENABLED_LIBRARIES[$library]} -eq 1 ]]; then
-      create_universal_library "${library}" "${ARCH_VAR_TVOS}"
-    fi
-  done
 
   create_ffmpeg_universal_library "${ARCH_VAR_TVOS}"
 
@@ -478,12 +501,6 @@ create_universal_libraries_for_tvos_default_frameworks() {
 create_tvos_default_frameworks() {
   echo -e "INFO: Building default frameworks\n" 1>>"${BASEDIR}"/build.log 2>&1
 
-  for library in {0..46}; do
-    if [[ ${ENABLED_LIBRARIES[$library]} -eq 1 ]]; then
-      create_framework "${library}" "${ARCH_VAR_TVOS}"
-    fi
-  done
-
   create_ffmpeg_framework "${ARCH_VAR_TVOS}"
 
   create_ffmpeg_kit_framework "${ARCH_VAR_TVOS}"
@@ -493,13 +510,6 @@ create_tvos_default_frameworks() {
 
 create_universal_libraries_for_tvos_xcframeworks() {
   echo -e "INFO: Building universal libraries for xcframeworks using ${TARGET_ARCH_LIST[@]}\n" 1>>"${BASEDIR}"/build.log 2>&1
-
-  for library in {0..46}; do
-    if [[ ${ENABLED_LIBRARIES[$library]} -eq 1 ]]; then
-      create_universal_library "${library}" "${ARCH_VAR_APPLETVOS}"
-      create_universal_library "${library}" "${ARCH_VAR_APPLETVSIMULATOR}"
-    fi
-  done
 
   create_ffmpeg_universal_library "${ARCH_VAR_APPLETVOS}"
   create_ffmpeg_universal_library "${ARCH_VAR_APPLETVSIMULATOR}"
@@ -513,13 +523,6 @@ create_universal_libraries_for_tvos_xcframeworks() {
 create_frameworks_for_tvos_xcframeworks() {
   echo -e "INFO: Building frameworks for xcframeworks\n" 1>>"${BASEDIR}"/build.log 2>&1
 
-  for library in {0..46}; do
-    if [[ ${ENABLED_LIBRARIES[$library]} -eq 1 ]]; then
-      create_framework "${library}" "${ARCH_VAR_APPLETVOS}"
-      create_framework "${library}" "${ARCH_VAR_APPLETVSIMULATOR}"
-    fi
-  done
-
   create_ffmpeg_framework "${ARCH_VAR_APPLETVOS}"
   create_ffmpeg_framework "${ARCH_VAR_APPLETVSIMULATOR}"
 
@@ -532,12 +535,6 @@ create_frameworks_for_tvos_xcframeworks() {
 create_tvos_xcframeworks() {
   export ARCHITECTURE_VARIANT_ARRAY=("${ARCH_VAR_APPLETVOS}" "${ARCH_VAR_APPLETVSIMULATOR}")
   echo -e "INFO: Building xcframeworks\n" 1>>"${BASEDIR}"/build.log 2>&1
-
-  for library in {0..46}; do
-    if [[ ${ENABLED_LIBRARIES[$library]} -eq 1 ]]; then
-      create_xcframework "${library}"
-    fi
-  done
 
   create_ffmpeg_xcframework
 

@@ -1,9 +1,7 @@
 #!/bin/bash
 
-# DISABLE x86-64 ASM WORKAROUNDS BEFORE APPLYING THEM AGAIN
-${SED_INLINE} 's/define   aom_clear_system_state()/define aom_clear_system_state() aom_reset_mmx_state()/g' ${BASEDIR}/src/${LIB_NAME}/aom_ports/system_state.h
-${SED_INLINE} 's/#add_asm_library("aom_ports/ add_asm_library("aom_ports/g' ${BASEDIR}/src/${LIB_NAME}/aom_ports/aom_ports.cmake
-${SED_INLINE} 's/#target_sources(aom_ports/ target_sources(aom_ports/g' ${BASEDIR}/src/${LIB_NAME}/aom_ports/aom_ports.cmake
+# DISABLE ASM WORKAROUNDS BEFORE APPLYING THEM AGAIN
+git checkout ${BASEDIR}/src/${LIB_NAME}/aom_ports 1>>"${BASEDIR}"/build.log 2>&1
 
 # SET BUILD OPTIONS
 ASM_OPTIONS=""
@@ -12,7 +10,7 @@ arm*)
   ASM_OPTIONS="-DCONFIG_RUNTIME_CPU_DETECT=0 -DARCH_ARM=1 -DENABLE_NEON=1 -DHAVE_NEON=1"
   ;;
 i386)
-  ASM_OPTIONS="-DARCH_X86=1 -DENABLE_SSE=1 -DHAVE_SSE=1 -DENABLE_SSE3=1 -DHAVE_SSE3=1"
+  ASM_OPTIONS="-DARCH_X86=1 -DENABLE_SSE=0 -DHAVE_SSE=0 -DENABLE_SSE3=0 -DHAVE_SSE3=0"
   ;;
 x86-64*)
   ASM_OPTIONS="-DARCH_X86_64=0 -DENABLE_SSE=0 -DENABLE_SSE2=0 -DENABLE_SSE3=0 -DENABLE_SSE4_1=0 -DENABLE_SSE4_2=0 -DENABLE_MMX=0"

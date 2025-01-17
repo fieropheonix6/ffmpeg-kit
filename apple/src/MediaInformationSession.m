@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Taner Sener
+ * Copyright (c) 2021-2022 Taner Sener
  *
  * This file is part of FFmpegKit.
  *
@@ -17,36 +17,38 @@
  *  along with FFmpegKit.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#import "ExecuteCallback.h"
+#import "MediaInformationSession.h"
 #import "LogCallback.h"
 #import "MediaInformation.h"
-#import "MediaInformationSession.h"
 
 @implementation MediaInformationSession {
     MediaInformation* _mediaInformation;
+    MediaInformationSessionCompleteCallback _completeCallback;
 }
 
 + (void)initialize {
     // EMPTY INITIALIZE
 }
 
-- (instancetype)init:(NSArray*)arguments {
-
-    self = [super init:arguments withExecuteCallback:nil withLogCallback:nil withLogRedirectionStrategy:LogRedirectionStrategyNeverPrintLogs];
-
-    return self;
++ (instancetype)create:(NSArray*)arguments {
+    return [[self alloc] init:arguments withCompleteCallback:nil withLogCallback:nil];
 }
 
-- (instancetype)init:(NSArray*)arguments withExecuteCallback:(ExecuteCallback)executeCallback {
-
-    self = [super init:arguments withExecuteCallback:executeCallback withLogCallback:nil withLogRedirectionStrategy:LogRedirectionStrategyNeverPrintLogs];
-
-    return self;
++ (instancetype)create:(NSArray*)arguments withCompleteCallback:(MediaInformationSessionCompleteCallback)completeCallback {
+    return [[self alloc] init:arguments withCompleteCallback:completeCallback withLogCallback:nil];
 }
 
-- (instancetype)init:(NSArray*)arguments withExecuteCallback:(ExecuteCallback)executeCallback withLogCallback:(LogCallback)logCallback {
++ (instancetype)create:(NSArray*)arguments withCompleteCallback:(MediaInformationSessionCompleteCallback)completeCallback withLogCallback:(LogCallback)logCallback {
+    return [[self alloc] init:arguments withCompleteCallback:completeCallback withLogCallback:logCallback];
+}
 
-    self = [super init:arguments withExecuteCallback:executeCallback withLogCallback:logCallback withLogRedirectionStrategy:LogRedirectionStrategyNeverPrintLogs];
+- (instancetype)init:(NSArray*)arguments withCompleteCallback:(MediaInformationSessionCompleteCallback)completeCallback withLogCallback:(LogCallback)logCallback {
+
+    self = [super init:arguments withLogCallback:logCallback withLogRedirectionStrategy:LogRedirectionStrategyNeverPrintLogs];
+
+    if (self) {
+        _completeCallback = completeCallback;
+    }
 
     return self;
 }
@@ -57,6 +59,22 @@
 
 - (void)setMediaInformation:(MediaInformation*)mediaInformation {
     _mediaInformation = mediaInformation;
+}
+
+- (MediaInformationSessionCompleteCallback)getCompleteCallback {
+    return _completeCallback;
+}
+
+- (BOOL)isFFmpeg {
+    return false;
+}
+
+- (BOOL)isFFprobe {
+    return false;
+}
+
+- (BOOL)isMediaInformation {
+    return true;
 }
 
 @end

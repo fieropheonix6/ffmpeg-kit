@@ -26,18 +26,14 @@ import java.util.List;
 
 public class FFmpegSessionTest {
 
-    static {
-        System.setProperty("enable.ffmpeg.kit.test.mode", "true");
-    }
-
-    private static final String[] TEST_ARGUMENTS = new String[]{"argument1", "argument2"};
+    static final String[] TEST_ARGUMENTS = new String[]{"argument1", "argument2"};
 
     @Test
     public void constructorTest() {
-        FFmpegSession ffmpegSession = new FFmpegSession(TEST_ARGUMENTS);
+        FFmpegSession ffmpegSession = FFmpegSession.create(TEST_ARGUMENTS);
 
-        // 1. getExecuteCallback
-        Assert.assertNull(ffmpegSession.getExecuteCallback());
+        // 1. getCompleteCallback
+        Assert.assertNull(ffmpegSession.getCompleteCallback());
 
         // 2. getLogCallback
         Assert.assertNull(ffmpegSession.getLogCallback());
@@ -97,17 +93,17 @@ public class FFmpegSessionTest {
 
     @Test
     public void constructorTest2() {
-        ExecuteCallback executeCallback = new ExecuteCallback() {
+        FFmpegSessionCompleteCallback completeCallback = new FFmpegSessionCompleteCallback() {
 
             @Override
-            public void apply(Session session) {
+            public void apply(FFmpegSession session) {
             }
         };
 
-        FFmpegSession ffmpegSession = new FFmpegSession(TEST_ARGUMENTS, executeCallback);
+        FFmpegSession ffmpegSession = FFmpegSession.create(TEST_ARGUMENTS, completeCallback);
 
-        // 1. getExecuteCallback
-        Assert.assertEquals(ffmpegSession.getExecuteCallback(), executeCallback);
+        // 1. getCompleteCallback
+        Assert.assertEquals(ffmpegSession.getCompleteCallback(), completeCallback);
 
         // 2. getLogCallback
         Assert.assertNull(ffmpegSession.getLogCallback());
@@ -167,10 +163,10 @@ public class FFmpegSessionTest {
 
     @Test
     public void constructorTest3() {
-        ExecuteCallback executeCallback = new ExecuteCallback() {
+        FFmpegSessionCompleteCallback completeCallback = new FFmpegSessionCompleteCallback() {
 
             @Override
-            public void apply(Session session) {
+            public void apply(FFmpegSession session) {
             }
         };
 
@@ -188,10 +184,10 @@ public class FFmpegSessionTest {
             }
         };
 
-        FFmpegSession ffmpegSession = new FFmpegSession(TEST_ARGUMENTS, executeCallback, logCallback, statisticsCallback);
+        FFmpegSession ffmpegSession = FFmpegSession.create(TEST_ARGUMENTS, completeCallback, logCallback, statisticsCallback);
 
-        // 1. getExecuteCallback
-        Assert.assertEquals(ffmpegSession.getExecuteCallback(), executeCallback);
+        // 1. getCompleteCallback
+        Assert.assertEquals(ffmpegSession.getCompleteCallback(), completeCallback);
 
         // 2. getLogCallback
         Assert.assertEquals(ffmpegSession.getLogCallback(), logCallback);
@@ -251,9 +247,9 @@ public class FFmpegSessionTest {
 
     @Test
     public void getSessionIdTest() {
-        FFmpegSession ffmpegSession1 = new FFmpegSession(TEST_ARGUMENTS);
-        FFmpegSession ffmpegSession2 = new FFmpegSession(TEST_ARGUMENTS);
-        FFmpegSession ffmpegSession3 = new FFmpegSession(TEST_ARGUMENTS);
+        FFmpegSession ffmpegSession1 = FFmpegSession.create(TEST_ARGUMENTS);
+        FFmpegSession ffmpegSession2 = FFmpegSession.create(TEST_ARGUMENTS);
+        FFmpegSession ffmpegSession3 = FFmpegSession.create(TEST_ARGUMENTS);
 
         Assert.assertTrue(ffmpegSession3.getSessionId() > ffmpegSession2.getSessionId());
         Assert.assertTrue(ffmpegSession3.getSessionId() > ffmpegSession1.getSessionId());
@@ -266,7 +262,7 @@ public class FFmpegSessionTest {
 
     @Test
     public void getLogs() {
-        final FFmpegSession ffmpegSession = new FFmpegSession(TEST_ARGUMENTS);
+        final FFmpegSession ffmpegSession = FFmpegSession.create(TEST_ARGUMENTS);
 
         String logMessage1 = "i am log one";
         String logMessage2 = "i am log two";
@@ -283,7 +279,7 @@ public class FFmpegSessionTest {
 
     @Test
     public void getLogsAsStringTest() {
-        final FFmpegSession ffmpegSession = new FFmpegSession(TEST_ARGUMENTS);
+        final FFmpegSession ffmpegSession = FFmpegSession.create(TEST_ARGUMENTS);
 
         String logMessage1 = "i am log one";
         String logMessage2 = "i am log two";
@@ -300,18 +296,18 @@ public class FFmpegSessionTest {
     public void getLogRedirectionStrategy() {
         FFmpegKitConfig.setLogRedirectionStrategy(LogRedirectionStrategy.NEVER_PRINT_LOGS);
 
-        final FFmpegSession ffmpegSession1 = new FFmpegSession(TEST_ARGUMENTS);
+        final FFmpegSession ffmpegSession1 = FFmpegSession.create(TEST_ARGUMENTS);
         Assert.assertEquals(FFmpegKitConfig.getLogRedirectionStrategy(), ffmpegSession1.getLogRedirectionStrategy());
 
         FFmpegKitConfig.setLogRedirectionStrategy(LogRedirectionStrategy.PRINT_LOGS_WHEN_SESSION_CALLBACK_NOT_DEFINED);
 
-        final FFmpegSession ffmpegSession2 = new FFmpegSession(TEST_ARGUMENTS);
+        final FFmpegSession ffmpegSession2 = FFmpegSession.create(TEST_ARGUMENTS);
         Assert.assertEquals(FFmpegKitConfig.getLogRedirectionStrategy(), ffmpegSession2.getLogRedirectionStrategy());
     }
 
     @Test
     public void startRunningTest() {
-        FFmpegSession ffmpegSession = new FFmpegSession(TEST_ARGUMENTS);
+        FFmpegSession ffmpegSession = FFmpegSession.create(TEST_ARGUMENTS);
 
         ffmpegSession.startRunning();
 
@@ -322,7 +318,7 @@ public class FFmpegSessionTest {
 
     @Test
     public void completeTest() {
-        FFmpegSession ffmpegSession = new FFmpegSession(TEST_ARGUMENTS);
+        FFmpegSession ffmpegSession = FFmpegSession.create(TEST_ARGUMENTS);
 
         ffmpegSession.startRunning();
         ffmpegSession.complete(new ReturnCode(100));
@@ -335,7 +331,7 @@ public class FFmpegSessionTest {
 
     @Test
     public void failTest() {
-        FFmpegSession ffmpegSession = new FFmpegSession(TEST_ARGUMENTS);
+        FFmpegSession ffmpegSession = FFmpegSession.create(TEST_ARGUMENTS);
 
         ffmpegSession.startRunning();
         ffmpegSession.fail(new Exception(""));

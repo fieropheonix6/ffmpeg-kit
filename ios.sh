@@ -16,10 +16,10 @@ export BASEDIR="$(pwd)"
 export FFMPEG_KIT_BUILD_TYPE="ios"
 source "${BASEDIR}"/scripts/variable.sh
 source "${BASEDIR}"/scripts/function-${FFMPEG_KIT_BUILD_TYPE}.sh
+disabled_libraries=()
 
 # SET DEFAULTS SETTINGS
 enable_default_ios_architectures
-enable_main_build
 
 # SELECT XCODE VERSION USED FOR BUILDING
 XCODE_FOR_FFMPEG_KIT=$(ls ~/.xcode.for.ffmpeg.kit.sh 2>>"${BASEDIR}"/build.log)
@@ -28,12 +28,12 @@ if [[ -f ${XCODE_FOR_FFMPEG_KIT} ]]; then
 fi
 
 # DETECT IOS SDK VERSION
-DETECTED_IOS_SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version 2>>"${BASEDIR}"/build.log)"
+export DETECTED_IOS_SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version 2>>${BASEDIR}/build.log)"
 echo -e "\nINFO: Using SDK ${DETECTED_IOS_SDK_VERSION} by Xcode provided at $(xcode-select -p)\n" 1>>"${BASEDIR}"/build.log 2>&1
 echo -e "INFO: Build options: $*\n" 1>>"${BASEDIR}"/build.log 2>&1
 
 # SET DEFAULT BUILD OPTIONS
-GPL_ENABLED="no"
+export GPL_ENABLED="no"
 DISPLAY_HELP=""
 BUILD_TYPE_ID=""
 BUILD_FULL=""
@@ -44,6 +44,9 @@ if [[ -z ${BUILD_VERSION} ]]; then
   echo -e "\n(*): Can not run git commands in this folder. See build.log.\n"
   exit 1
 fi
+
+# MAIN BUILDS ENABLED BY DEFAULT
+enable_main_build
 
 # PROCESS LTS BUILD OPTION FIRST AND SET BUILD TYPE: MAIN OR LTS
 for argument in "$@"; do
@@ -67,6 +70,9 @@ while [ ! $# -eq 0 ]; do
     SKIP_LIBRARY=$(echo "$1" | sed -e 's/^--[A-Za-z]*-//g')
 
     skip_library "${SKIP_LIBRARY}"
+    ;;
+  --no-bitcode)
+    export NO_BITCODE="1"
     ;;
   --no-framework)
     NO_FRAMEWORK="1"
@@ -111,17 +117,40 @@ while [ ! $# -eq 0 ]; do
     BUILD_FULL="1"
     ;;
   --enable-gpl)
-    GPL_ENABLED="yes"
+    export GPL_ENABLED="yes"
+    ;;
+  --enable-custom-library-*)
+    CUSTOM_LIBRARY_OPTION_KEY=$(echo $1 | sed -e 's/^--enable-custom-//g;s/=.*$//g')
+    CUSTOM_LIBRARY_OPTION_VALUE=$(echo $1 | sed -e 's/^--enable-custom-.*=//g')
+
+    echo -e "INFO: Custom library options detected: ${CUSTOM_LIBRARY_OPTION_KEY} ${CUSTOM_LIBRARY_OPTION_VALUE}\n" 1>>"${BASEDIR}"/build.log 2>&1
+
+    generate_custom_library_environment_variables "${CUSTOM_LIBRARY_OPTION_KEY}" "${CUSTOM_LIBRARY_OPTION_VALUE}"
     ;;
   --enable-*)
     ENABLED_LIBRARY=$(echo $1 | sed -e 's/^--[A-Za-z]*-//g')
 
     enable_library "${ENABLED_LIBRARY}"
     ;;
+  --disable-lib-*)
+    DISABLED_LIB=$(echo $1 | sed -e 's/^--[A-Za-z]*-[A-Za-z]*-//g')
+
+    disabled_libraries+=("${DISABLED_LIB}")
+    ;;
   --disable-*)
     DISABLED_ARCH=$(echo $1 | sed -e 's/^--[A-Za-z]*-//g')
 
     disable_arch "${DISABLED_ARCH}"
+    ;;
+  --target=*)
+    TARGET=$(echo $1 | sed -e 's/^--[A-Za-z]*=//g')
+
+    export IOS_MIN_VERSION=${TARGET}
+    ;;
+  --mac-catalyst-target=*)
+    TARGET=$(echo $1 | sed -e 's/^--[A-Za-z]*-[A-Za-z]*-[A-Za-z]*=//g')
+
+    export MAC_CATALYST_MIN_VERSION=${TARGET}
     ;;
   *)
     print_unknown_option "$1"
@@ -130,17 +159,9 @@ while [ ! $# -eq 0 ]; do
   shift
 done
 
-# VALIDATE THAT LTS RELEASES ARE BUILT USING THE CORRECT VERSION
-if [[ -n ${FFMPEG_KIT_LTS_BUILD} ]] && [[ "${DETECTED_IOS_SDK_VERSION}" != "${IOS_MIN_VERSION}" ]]; then
-  if [[ -z ${BUILD_FORCE} ]]; then
-    echo -e "\n(*) LTS packages should be built using SDK ${IOS_MIN_VERSION} but current configuration uses SDK ${DETECTED_IOS_SDK_VERSION}\n"
-    exit 1
-  fi
-fi
-
 # PROCESS FULL OPTION AS LAST OPTION
 if [[ -n ${BUILD_FULL} ]]; then
-  for library in {0..58}; do
+  for library in {0..61}; do
     if [ ${GPL_ENABLED} == "yes" ]; then
       enable_library "$(get_library_name "$library")" 1
     else
@@ -151,6 +172,11 @@ if [[ -n ${BUILD_FULL} ]]; then
   done
 fi
 
+# DISABLE SPECIFIED LIBRARIES
+for disabled_library in ${disabled_libraries[@]}; do
+  set_library "${disabled_library}" 0
+done
+
 # IF HELP DISPLAYED EXIT
 if [[ -n ${DISPLAY_HELP} ]]; then
   display_help
@@ -158,49 +184,35 @@ if [[ -n ${DISPLAY_HELP} ]]; then
 fi
 
 # DISABLE NOT SUPPORTED ARCHITECTURES
-disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_ARMV7}" "${DETECTED_IOS_SDK_VERSION}"
-disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_ARMV7S}" "${DETECTED_IOS_SDK_VERSION}"
-disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_I386}" "${DETECTED_IOS_SDK_VERSION}"
-disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_ARM64E}" "${DETECTED_IOS_SDK_VERSION}"
-disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_X86_64_MAC_CATALYST}" "${DETECTED_IOS_SDK_VERSION}"
-disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_ARM64_MAC_CATALYST}" "${DETECTED_IOS_SDK_VERSION}"
-disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_ARM64_SIMULATOR}" "${DETECTED_IOS_SDK_VERSION}"
-
-# CHECK SOME RULES FOR .xcframework BUNDLES
-
-# 1. DO NOT ALLOW --lts AND --xcframework OPTIONS TOGETHER
-if [[ -n ${FFMPEG_KIT_XCF_BUILD} ]] && [[ -n ${FFMPEG_KIT_LTS_BUILD} ]]; then
-  echo -e "\n(*) LTS packages does not support xcframework bundles.\n"
-  exit 1
-fi
+disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_ARMV7}"
+disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_ARMV7S}"
+disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_I386}"
+disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_ARM64E}"
+disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_X86_64_MAC_CATALYST}"
+disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_ARM64_MAC_CATALYST}"
+disable_ios_architecture_not_supported_on_detected_sdk_version "${ARCH_ARM64_SIMULATOR}"
 
 # CHECK SOME RULES FOR .framework BUNDLES
 
-# 1. DISABLE arm64-mac-catalyst WHEN arm64 IS ENABLED IN framework BUNDLES
-if [[ -z ${FFMPEG_KIT_XCF_BUILD} ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_ARM64}]} -eq 1 ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_ARM64_MAC_CATALYST}]} -eq 1 ]]; then
-  echo -e "INFO: Disabled arm64-mac-catalyst architecture which can not co-exist with arm64 in the same framework bundle.\n" 1>>"${BASEDIR}"/build.log 2>&1
+# 1. DISABLE arm64-mac-catalyst IN framework BUNDLES
+if [[ ${NO_FRAMEWORK} -ne 1 ]] && [[ -z ${FFMPEG_KIT_XCF_BUILD} ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_ARM64_MAC_CATALYST}]} -eq 1 ]]; then
+  echo -e "INFO: Disabled arm64-mac-catalyst architecture which cannot exist in a framework bundle.\n" 1>>"${BASEDIR}"/build.log 2>&1
   disable_arch "arm64-mac-catalyst"
 fi
 
-# 2. DISABLE arm64-simulator WHEN arm64 IS ENABLED IN framework BUNDLES
-if [[ -z ${FFMPEG_KIT_XCF_BUILD} ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_ARM64}]} -eq 1 ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_ARM64_SIMULATOR}]} -eq 1 ]]; then
-  echo -e "INFO: Disabled arm64-simulator architecture which can not co-exist with arm64 in the same framework bundle.\n" 1>>"${BASEDIR}"/build.log 2>&1
-  disable_arch "arm64-simulator"
-fi
-
-# 3. DISABLE arm64-simulator WHEN arm64-mac-catalyst IS ENABLED IN framework BUNDLES
-if [[ -z ${FFMPEG_KIT_XCF_BUILD} ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_ARM64_MAC_CATALYST}]} -eq 1 ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_ARM64_SIMULATOR}]} -eq 1 ]]; then
-  echo -e "INFO: Disabled arm64-simulator architecture which can not co-exist with arm64-mac-catalyst in the same framework bundle.\n" 1>>"${BASEDIR}"/build.log 2>&1
-  disable_arch "arm64-simulator"
-fi
-
-# 4. DISABLE x86-64-mac-catalyst WHEN x86-64 IS ENABLED IN framework BUNDLES
-if [[ -z ${FFMPEG_KIT_XCF_BUILD} ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_X86_64}]} -eq 1 ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_X86_64_MAC_CATALYST}]} -eq 1 ]]; then
-  echo -e "INFO: Disabled x86-64-mac-catalyst architecture which can not co-exist with x86-64 in the same framework bundle.\n" 1>>"${BASEDIR}"/build.log 2>&1
+# 2. DISABLE x86-64-mac-catalyst IN framework BUNDLES
+if [[ ${NO_FRAMEWORK} -ne 1 ]] && [[ -z ${FFMPEG_KIT_XCF_BUILD} ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_X86_64_MAC_CATALYST}]} -eq 1 ]]; then
+  echo -e "INFO: Disabled x86-64-mac-catalyst architecture which cannot exist in a framework bundle.\n" 1>>"${BASEDIR}"/build.log 2>&1
   disable_arch "x86-64-mac-catalyst"
 fi
 
-echo -e "\nBuilding ffmpeg-kit ${BUILD_TYPE_ID}static library for iOS\n"
+# 3. DISABLE arm64-simulator WHEN arm64 IS ENABLED IN framework BUNDLES
+if [[ ${NO_FRAMEWORK} -ne 1 ]] && [[ -z ${FFMPEG_KIT_XCF_BUILD} ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_ARM64}]} -eq 1 ]] && [[ ${ENABLED_ARCHITECTURES[${ARCH_ARM64_SIMULATOR}]} -eq 1 ]]; then
+  echo -e "INFO: Disabled arm64-simulator architecture which cannot co-exist with arm64 in the same framework bundle.\n" 1>>"${BASEDIR}"/build.log 2>&1
+  disable_arch "arm64-simulator"
+fi
+
+echo -e "\nBuilding ffmpeg-kit ${BUILD_TYPE_ID}shared library for iOS\n"
 echo -e -n "INFO: Building ffmpeg-kit ${BUILD_VERSION} ${BUILD_TYPE_ID}for iOS: " 1>>"${BASEDIR}"/build.log 2>&1
 echo -e "$(date)\n" 1>>"${BASEDIR}"/build.log 2>&1
 
@@ -210,6 +222,7 @@ print_enabled_libraries
 print_reconfigure_requested_libraries
 print_rebuild_requested_libraries
 print_redownload_requested_libraries
+print_custom_libraries
 
 # VALIDATE GPL FLAGS
 for gpl_library in {$LIBRARY_X264,$LIBRARY_XVIDCORE,$LIBRARY_X265,$LIBRARY_LIBVIDSTAB,$LIBRARY_RUBBERBAND}; do
@@ -225,13 +238,13 @@ for gpl_library in {$LIBRARY_X264,$LIBRARY_XVIDCORE,$LIBRARY_X265,$LIBRARY_LIBVI
 done
 
 echo -n -e "\nDownloading sources: "
-echo -e "INFO: Downloading source code of ffmpeg and enabled external libraries.\n" 1>>"${BASEDIR}"/build.log 2>&1
+echo -e "INFO: Downloading the source code of ffmpeg and external libraries.\n" 1>>"${BASEDIR}"/build.log 2>&1
 
 # DOWNLOAD GNU CONFIG
 download_gnu_config
 
 # DOWNLOAD LIBRARY SOURCES
-downloaded_enabled_library_sources "${ENABLED_LIBRARIES[@]}"
+downloaded_library_sources "${ENABLED_LIBRARIES[@]}"
 
 # THIS WILL SAVE ARCHITECTURES TO BUILD
 TARGET_ARCH_LIST=()
@@ -250,7 +263,7 @@ for run_arch in {0..12}; do
     TARGET_ARCH_LIST+=("${FULL_ARCH}")
 
     # CLEAR FLAGS
-    for library in {0..58}; do
+    for library in {0..61}; do
       library_name=$(get_library_name "${library}")
       unset "$(echo "OK_${library_name}" | sed "s/\-/\_/g")"
       unset "$(echo "DEPENDENCY_REBUILT_${library_name}" | sed "s/\-/\_/g")"
@@ -273,7 +286,7 @@ if [[ ${NO_FRAMEWORK} -ne 1 ]]; then
     build_apple_architecture_variant_strings
 
     if [[ -n ${FFMPEG_KIT_XCF_BUILD} ]]; then
-      echo -e -n "\nCreating universal libraries and xcframeworks under prebuilt: "
+      echo -e -n "\nCreating xcframeworks under prebuilt: "
 
       create_universal_libraries_for_ios_xcframeworks
 
@@ -281,7 +294,7 @@ if [[ ${NO_FRAMEWORK} -ne 1 ]]; then
 
       create_ios_xcframeworks
     else
-      echo -e -n "\nCreating universal libraries and frameworks under prebuilt: "
+      echo -e -n "\nCreating frameworks under prebuilt: "
 
       create_universal_libraries_for_ios_default_frameworks
 

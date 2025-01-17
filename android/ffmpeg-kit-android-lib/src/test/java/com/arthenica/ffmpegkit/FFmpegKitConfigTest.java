@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020 Taner Sener
+ * Copyright (c) 2018-2021 Taner Sener
  *
  * This file is part of FFmpegKit.
  *
@@ -18,6 +18,8 @@
  */
 
 package com.arthenica.ffmpegkit;
+
+import static com.arthenica.ffmpegkit.FFmpegSessionTest.TEST_ARGUMENTS;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -150,6 +152,39 @@ public class FFmpegKitConfigTest {
         Assert.assertEquals("audio", listToPackageName(Collections.singletonList("speex")));
         Assert.assertEquals("https", listToPackageName(Collections.singletonList("gnutls")));
         Assert.assertEquals("https-gpl", listToPackageName(Arrays.asList("gnutls", "xvidcore")));
+    }
+
+    @Test
+    public void extractExtensionFromSafDisplayName() {
+        String extension = FFmpegKitConfig.extractExtensionFromSafDisplayName("video.mp4 (2)");
+        Assert.assertEquals("mp4", extension);
+
+        extension = FFmpegKitConfig.extractExtensionFromSafDisplayName("video file name.mp3 (2)");
+        Assert.assertEquals("mp3", extension);
+
+        extension = FFmpegKitConfig.extractExtensionFromSafDisplayName("file.mp4");
+        Assert.assertEquals("mp4", extension);
+
+        extension = FFmpegKitConfig.extractExtensionFromSafDisplayName("file name.mp4");
+        Assert.assertEquals("mp4", extension);
+    }
+
+    @Test
+    public void setSessionHistorySize() {
+        int newSize = 15;
+        FFmpegKitConfig.setSessionHistorySize(newSize);
+
+        for (int i = 1; i <= (newSize + 5); i++) {
+            FFmpegSession.create(TEST_ARGUMENTS);
+            Assert.assertTrue(FFmpegKitConfig.getSessions().size() <= newSize);
+        }
+
+        newSize = 3;
+        FFmpegKitConfig.setSessionHistorySize(newSize);
+        for (int i = 1; i <= (newSize + 5); i++) {
+            FFmpegSession.create(TEST_ARGUMENTS);
+            Assert.assertTrue(FFmpegKitConfig.getSessions().size() <= newSize);
+        }
     }
 
     private String listToPackageName(final List<String> externalLibraryList) {
